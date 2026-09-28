@@ -12,7 +12,7 @@ export default function LoginPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    router.push('/dashboard');
+    window.location.href = '/dashboard';
   };
 
   return (
@@ -26,7 +26,7 @@ export default function LoginPage() {
           <p className="text-muted text-sm mt-1">Clinical Intelligence Platform</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} action="/dashboard" method="GET" className="space-y-5">
           <div>
             <label className="block text-sm font-semibold text-slate mb-1">Email Address</label>
             <div className="relative">
