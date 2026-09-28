@@ -524,6 +524,18 @@ function NewAssessmentContent() {
                 )}
               </div>
 
+              <div className="mt-4 flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMriPreview('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOAAAADgCAAAAAA/RjU9AAAEzklEQVR4nO2d0ZGjMBBEW10OgXAUAuESAoFd+VxXtbX2eYWmR4j2vo/78IKkdz0YjLFUFnhDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmHMb1dH2/YXVRnD7++/++uV0zZJ7V217pfaVmi1ZlvPkhkiWJMGtUe4fNcuxpAhux+we1BTFspweXm6MZZkhvMQYyzKTXoJiWebSkyuWZTY9sWKRCW4yvTt1nUxw08WnDbEsE8anDLEsM8YnDLEsc8YnC5Ez+2F/+hQ5PsEtpzxlZVqWaePTlCln94uWKWf3ixpyer+gIef3ixnyAn4hQ17BL2LIS/gFDHkNv35DXsSv25BX8es15GX8Og3LMsxv/367fsh16Q0j2F+/0meZnuB2MMAfv11KjbAsuX4NG9dUw7Jk+jVuWxMNb8ij+b9iTzway5IV4MEjtSZFyEn8DsS9zVCie88uKXXKlAAFVwKqCDmPX47hrXMs7/qP7CovU8oDjF2I7+oIGRjM685P3j8g2BRgfHy7NkKGBvPc8yRt9Ai2BKgZ266MkPP5aQ0ZHczXTidsCfZP/FJXoco3h11Wo4wP5l+PspakrVEVoPoEvYsiJMzhpAHKIqRkMClPWmjaJMyhpEJzvqvYFTVKmMN5A9REyAHjOLVlwhzGKzTz29A9XKOEOYQ5DLeQ+339ni+4nfPEQRv7lp5gtn60fcIc4tMFt/c1MuCR5thBSJhDmEOYw9juQ566TxXcZj7Nt7zL/Jbo1WFo70E/DInsTJhDmEN8tuA2+1kCP50nPj3B9wz79VlgX8IcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcRnYe8SvqaD+EOXz/53VUSP3U9z95/fQErw9hDkN7jzlCQ70Q5hAfLrjOfp6oa2qCI/RjfRDmEOYQny641pMPwhqbfIUwhzCH0Qaya7SmC64zn+rrml+iuf7h1glzCHOI8EGYWaM1PAUZYQ4FbeRFWMcIrvUkwyqYJI8wh5g3QkWA+E2wjYwINW2yaaufr0f1hlUzDydhDjFphKIAoUtQayhrjY3bNXwqVBpW2Uy4hDkUtqWLsJ4guNZx46rCuZqJ+QyVfhAfg3W6t2O2b9p0ey0+uqqdTJyhwbzq++T9I4Jtd0hjI6zq2eBvgcH8r/v+3xolfCjhkY1bb3L3jrMmTOdPzGOY4Yekyfw7yjTpzhWPbd7+TczR8WatN1ESl0Q5EGK95JIoNWPNl6OU31V7Pm7dJXT89nwXlea0S4NV0dpnoxYa3k6aPqBnzWH2dHTScwldayoTlzHsWzOauIph55rYxEUMe9f8Jq5h2L2mOXEJw/4124krGAbWpCcuYBjwQ+iu2iDDiB9itw2HGIb8ELwvOsAw5oeua9GvbLkTH1XE/BAWzL30DsYHya37xDKN+0GQYFqZhstTJphTpoL4IBPUhyiJDzpBdYia+KAUVIaoig9SQZmiUA9aQYmiVA9qwbCiWA96wbtir2OFWg8Zgr0xysNLFDweY0Z4qYIPxzbJ+7Vsjh1SBZskU+UGCN55TDL8pPn4DJIqN0jwwdNcyulqgwXPgjCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIdnDyCbPxz/GLOtw9isAAAAAElFTkSuQmCC');
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#EEF4F0] hover:bg-[#DDE7E1] text-[#3D8062] rounded-xl text-xs font-bold transition-all border border-[#DDE7E1] cursor-pointer shadow-xs"
+                >
+                  <Brain className="w-4 h-4 text-[#3D8062]" /> ⚡ Or Click Here to Load Clinical Demo MRI Scan
+                </button>
+              </div>
+
               <div className="mt-6 flex items-center justify-between text-xs text-[#78858A] bg-[#EEF4F0] p-4 rounded-xl">
                 <span>Recommended: T1-weighted axial brain slice (224×224 normalized matrix)</span>
                 <span className="font-mono text-[#3D8062] font-semibold">Trained EfficientNet-B0 Compatible</span>
@@ -1106,9 +1118,9 @@ function NewAssessmentContent() {
             {!isAnalyzing && (
               <button 
                 onClick={handleNext} 
-                disabled={currentStep === 2 && !mriFile}
+                disabled={currentStep === 2 && !mriPreview}
                 className={`flex items-center justify-center rounded-[10px] px-8 h-11 font-bold transition-colors cursor-pointer ${
-                  (currentStep === 2 && !mriFile) ? 'bg-[#DDE7E1] text-[#78858A] cursor-not-allowed' : 'bg-[#3D8062] text-white hover:bg-[#346D54]'
+                  (currentStep === 2 && !mriPreview) ? 'bg-[#DDE7E1] text-[#78858A] cursor-not-allowed' : 'bg-[#3D8062] text-white hover:bg-[#346D54]'
                 }`}
               >
                 {currentStep === 2 ? 'Run AI Analysis' : currentStep === 5 ? (
