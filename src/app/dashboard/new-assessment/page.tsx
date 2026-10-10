@@ -9,7 +9,7 @@ import {
   Layers, Zap, RefreshCw
 } from 'lucide-react';
 import { ProfessionalMedicalReport } from '@/components/ProfessionalMedicalReport';
-import { generateGradCamOverlay, getFallbackGradCamSvg } from '@/utils/gradcam';
+import { isAuthenticHeatmap } from '@/utils/gradcam';
 
 const ALZHEIMER_CLASSES = ['Non Demented', 'Very Mild Demented', 'Mild Demented', 'Moderate Demented'];
 const PARKINSON_CLASSES = ['Healthy Control', "Parkinson's Disease"];
@@ -374,31 +374,34 @@ const runAnalysis = async () => {
       fileName.endsWith('.png') ||
       fileName.endsWith('.webp');
 
-    if (!isSupportedImage && !isNifti) {
+    if (analysisMode === 'parkinson' && !isNifti) {
       throw new Error(
-        'Unsupported file format. Please upload a brain MRI scan (.jpg, .jpeg, .png, .webp, .nii, or .nii.gz).'
+        "Parkinson's disease assessment strictly requires a 3D NIfTI MRI volume (.nii or .nii.gz). 2D planar images are not supported for this volumetric pipeline."
+      );
+    }
+
+    if (analysisMode === 'dual' && !isNifti) {
+      throw new Error(
+        "Dual assessment strictly requires a 3D NIfTI MRI volume (.nii or .nii.gz) to process the volumetric Parkinson pipeline alongside Alzheimer evaluation."
+      );
+    }
+
+    if (analysisMode === 'alzheimer' && !isSupportedImage && !isNifti) {
+      throw new Error(
+        "Alzheimer's assessment requires a 2D MRI slice (.png, .jpg, .jpeg, .webp) or a 3D NIfTI volume (.nii, .nii.gz)."
       );
     }
 
     let uploadFile = mriFile;
 
-    // Automatically slice NIfTI volumes (.nii / .nii.gz) right in the browser to stay within serverless limits
-    if (isNifti) {
-      try {
-        const sliceFile = await extractSliceFromNifti(mriFile);
-        if (sliceFile !== mriFile) {
-          uploadFile = sliceFile;
-        }
-      } catch (err) {
-        console.warn('Browser NIfTI slicing skipped:', err);
-      }
-    } else if (isSupportedImage) {
+    // Only resize 2D images if they exceed dimensions; NEVER slice or alter 3D NIfTI volumes for Parkinson/Dual
+    if (isSupportedImage) {
       uploadFile = await resizeImageIfNeeded(mriFile);
     }
 
-    if (uploadFile.size > 4.4 * 1024 * 1024) {
+    if (uploadFile.size > 25 * 1024 * 1024) {
       throw new Error(
-        `The file size (${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB cloud limit. Please choose a file under 4.5 MB or use the demo MRI scan.`
+        `The file size (${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 25 MB limit. Please select a valid MRI file under 25 MB.`
       );
     }
 
@@ -509,37 +512,26 @@ const runAnalysis = async () => {
     }
 
     // ---------------------------------------------------------
-    // SAVE ANALYSIS RESULTS
+    // SAVE ANALYSIS RESULTS (GENUINE INFERENCE & GRAD-CAM)
     // ---------------------------------------------------------
-    let activeExplainability =
+    const activeExplainabilityRaw =
       data.parkinson?.explainability ||
       data.alzheimer?.explainability ||
       null;
 
-    const sourceImage = activeExplainability?.display_slice || mriPreview;
-    let computedHeatmap = activeExplainability?.heatmapUrl;
+    const sourceImage = activeExplainabilityRaw?.display_slice || mriPreview || null;
+    const genuineHeatmap =
+      isAuthenticHeatmap(activeExplainabilityRaw?.heatmapUrl)
+        ? activeExplainabilityRaw.heatmapUrl
+        : null;
 
-    if (sourceImage) {
-      try {
-        const overlay = await generateGradCamOverlay(sourceImage, analysisMode);
-        if (overlay) {
-          computedHeatmap = overlay;
-        }
-      } catch (e) {
-        console.warn('Canvas Grad-CAM generation fallback:', e);
-      }
-    }
-
-    if (!computedHeatmap || computedHeatmap === sourceImage) {
-      computedHeatmap = getFallbackGradCamSvg(analysisMode);
-    }
-
-    activeExplainability = {
-      ...(activeExplainability || {}),
-      method: 'Grad-CAM',
-      target_layer: 'model.features[8]',
-      display_slice: sourceImage || getFallbackGradCamSvg(analysisMode),
-      heatmapUrl: computedHeatmap,
+    const activeExplainability = {
+      method: activeExplainabilityRaw?.method || 'Grad-CAM',
+      target_layer:
+        activeExplainabilityRaw?.target_layer ||
+        (analysisMode === 'parkinson' ? 'model.features[8]' : 'model.features[-1]'),
+      display_slice: sourceImage,
+      heatmapUrl: genuineHeatmap,
       salient_regions:
         analysisMode === 'parkinson'
           ? ['Substantia Nigra', 'Midbrain Tegmentum']
@@ -1121,8 +1113,21 @@ pdf.save(
                         bytes[i] = binaryString.charCodeAt(i);
                       }
                       const demoBlob = new Blob([bytes], { type: 'image/png' });
-                      const demoFile = new File([demoBlob], 'clinical_demo_axial_mri.png', { type: 'image/png' });
+                      const demoFile = new File([demoBlob], 'demo_alzheimer_axial_mri.png', { type: 'image/png' });
                       setMriFile(demoFile);
+                      setAnalysisMode('alzheimer');
+                      setPatientData((prev) => ({
+                        ...prev,
+                        id: 'DEMO-PT-8021',
+                        name: 'Demo Patient (Anonymized)',
+                        age: '72',
+                        gender: 'Female',
+                        bp: '130/82 mmHg',
+                        bloodSugar: '108 mg/dL',
+                        memoryInfo: 'Mild short-term memory retrieval delays noted during screening.',
+                        movementInfo: 'Normal motor function, bilateral symmetry, no resting tremor.',
+                        medicalHistory: 'Controlled hypertension, no prior neurological events.',
+                      }));
                     } catch (e) {
                       console.error('Error creating demo scan file:', e);
                     }
@@ -1130,20 +1135,20 @@ pdf.save(
                   }}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#EEF4F0] hover:bg-[#DDE7E1] text-[#3D8062] rounded-xl text-xs font-bold transition-all border border-[#DDE7E1] cursor-pointer shadow-xs"
                 >
-                  <Brain className="w-4 h-4 text-[#3D8062]" /> ⚡ Or Click Here to Load Clinical Demo MRI Scan
+                  <Brain className="w-4 h-4 text-[#3D8062]" /> ⚡ Load Alzheimer 2D MRI Demo Scan (Anonymized)
                 </button>
               </div>
 
-              <div className="mt-6 flex items-center justify-between text-xs text-[#78858A] bg-[#EEF4F0] p-4 rounded-xl">
+              <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-[#78858A] bg-[#EEF4F0] p-4 rounded-xl gap-2">
                 <span>
                   {analysisMode === 'alzheimer' &&
-                    "Alzheimer's: Axial Brain MRI (JPG, PNG, WebP, or NIfTI)"}
+                    "Alzheimer's: Axial 2D MRI Slice (PNG, JPG, JPEG, WebP) or 3D NIfTI (.nii, .nii.gz)"}
                   {analysisMode === 'parkinson' &&
-                    "Parkinson's: Brain MRI (PNG, JPG, or NIfTI volume)"}
+                    "Parkinson's: Strictly requires 3D Volumetric NIfTI (.nii, .nii.gz) for 5-slice midbrain evaluation."}
                   {analysisMode === 'dual' &&
-                    "Dual Assessment: Single Brain MRI Scan evaluated by both models"}
+                    "Dual Assessment: Strictly requires 3D Volumetric NIfTI (.nii, .nii.gz) for multi-model evaluation."}
                 </span>
-                <span className="font-mono text-[#3D8062] font-semibold">Trained EfficientNet-B0 Compatible</span>
+                <span className="font-mono text-[#3D8062] font-semibold shrink-0">Trained EfficientNet-B0 Compatible</span>
               </div>
             </div>
           )}
@@ -1371,7 +1376,7 @@ pdf.save(
               <div className="relative aspect-square overflow-hidden rounded-lg bg-black">
 
                 <img
-                  src={analysisResults.explainability.heatmapUrl || getFallbackGradCamSvg(analysisMode)}
+                  src={analysisResults.explainability.heatmapUrl}
                   alt="Real Grad-CAM visualization"
                   className="w-full h-full object-contain"
                 />
@@ -1911,11 +1916,17 @@ pdf.save(
                           {reportScope === 'alzheimer' ? 'Hippocampal Grad-CAM' : reportScope === 'parkinson' ? 'Midbrain Grad-CAM' : 'Integrated Grad-CAM'}
                         </p>
                         <div className="bg-[#172127] rounded-xl p-2 h-48 flex items-center justify-center overflow-hidden">
-                          <img
-                            src={analysisResults?.explainability?.heatmapUrl || getFallbackGradCamSvg(reportScope)}
-                            alt="Grad-CAM Saliency Overlay"
-                            className="object-contain max-h-full rounded-lg"
-                          />
+                          {analysisResults?.explainability?.heatmapUrl && !analysisResults.explainability.heatmapUrl.startsWith('data:image/svg') ? (
+                            <img
+                              src={analysisResults.explainability.heatmapUrl}
+                              alt="Grad-CAM Saliency Overlay"
+                              className="object-contain max-h-full rounded-lg"
+                            />
+                          ) : (
+                            <div className="p-3 text-center text-gray-400 text-xs">
+                              Visual explainability overlay unavailable
+                            </div>
+                          )}
                         </div>
                      </div>
                   </div>

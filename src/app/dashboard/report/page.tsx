@@ -46,7 +46,6 @@ import {
 
 
 import { ProfessionalMedicalReport } from '@/components/ProfessionalMedicalReport';
-import { generateGradCamOverlay, getFallbackGradCamSvg } from '@/utils/gradcam';
 
 
 
@@ -325,23 +324,6 @@ if (hasAlzheimer && hasParkinson) {
   setReportScope('parkinson');
 } else {
   setReportScope('both');
-}
-
-// Ensure Grad-CAM overlay and MRI slice are always populated
-if (!savedReport.mriImage) {
-  savedReport.mriImage = getFallbackGradCamSvg(activeMode);
-}
-
-if (!savedReport.gradcamHeatmap || savedReport.gradcamHeatmap === savedReport.mriImage) {
-  if (savedReport.mriImage && !savedReport.mriImage.startsWith('data:image/svg')) {
-    try {
-      savedReport.gradcamHeatmap = await generateGradCamOverlay(savedReport.mriImage, activeMode);
-    } catch {
-      savedReport.gradcamHeatmap = getFallbackGradCamSvg(activeMode);
-    }
-  } else {
-    savedReport.gradcamHeatmap = getFallbackGradCamSvg(activeMode);
-  }
 }
 
 setReport(savedReport);
@@ -2608,65 +2590,40 @@ pdf.save(
 
 
               <div className="w-full h-56 bg-[#172228] rounded-lg flex items-center justify-center p-2 border border-[#23353E]">
-
-
-
-                <img src={report.mriImage || getFallbackGradCamSvg(reportScope)} alt="Input MRI" className="max-h-full object-contain" />
-
-
-
+                {report.mriImage ? (
+                  <img src={report.mriImage} alt="Input MRI" className="max-h-full object-contain" />
+                ) : (
+                  <div className="p-3 text-center text-gray-400 text-xs">MRI slice image unavailable</div>
+                )}
               </div>
-
-
 
               <span className="text-[10px] text-[#94A3B8] mt-1.5 font-mono">Matrix: 224x224 &bull; Normalization: ImageNet RGB</span>
 
-
-
             </div>
 
-
-
-
-
-
-
-                        {/* Panel B: Grad-CAM Overlay */}
-
-
-
+            {/* Panel B: Grad-CAM Overlay */}
             <div className="flex flex-col items-center">
-
-
-
               <span className="text-xs font-bold text-[#CBD5E1] mb-2">
-
-
-
                 Panel B: {reportScope === 'both' ? 'Integrated Grad-CAM Heatmap' : reportScope === 'alzheimer' ? 'Alzheimer\'s Grad-CAM' : 'Parkinson\'s Grad-CAM'}
-
-
-
               </span>
 
-
-
               <div className="w-full h-56 bg-[#172228] rounded-lg flex items-center justify-center p-2 border border-[#23353E] relative overflow-hidden">
-
-
-
-                <img
-                  src={report.gradcamHeatmap || getFallbackGradCamSvg(reportScope)}
-                  alt="Grad-CAM Heatmap Overlay"
-                  className="max-h-full object-contain"
-                />
-
+                {report.gradcamHeatmap && !report.gradcamHeatmap.startsWith('data:image/svg') ? (
+                  <img
+                    src={report.gradcamHeatmap}
+                    alt="Grad-CAM Heatmap Overlay"
+                    className="max-h-full object-contain"
+                  />
+                ) : (
+                  <div className="p-3 text-center text-gray-400 text-xs flex flex-col items-center justify-center">
+                    <span className="font-semibold text-gray-300">Visual Explainability Unavailable</span>
+                    <span className="text-[10px] mt-1">Real model gradient map not computed for this record.</span>
+                  </div>
+                )}
               </div>
 
               <span className="text-[10px] text-[#94A3B8] mt-1.5 font-mono text-center">
-
                 Grad-CAM target layer and saliency metadata are supplied by the inference pipeline.
-
               </span>
 
             </div>

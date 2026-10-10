@@ -22,7 +22,7 @@ def load_parkinson_model(checkpoint_path=None, device='cpu'):
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state = ckpt.get('model_state_dict', ckpt)
         model.load_state_dict(state)
-        print(f'[✓] Loaded checkpoint: {checkpoint_path}')
+        print(f'[OK] Loaded checkpoint: {checkpoint_path}')
     elif checkpoint_path:
         raise FileNotFoundError(f'Checkpoint not found at: {checkpoint_path}')
     model = model.to(device)

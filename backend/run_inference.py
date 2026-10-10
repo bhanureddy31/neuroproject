@@ -336,7 +336,7 @@ def preprocess_parkinson_nifti(path):
 # Parkinson model
 # ---------------------------------------------------------------------
 
-def create_parkinson_model():
+def create_parkinson_model(checkpoint_path=None):
     """
     Create the exact EfficientNet-B0 architecture used by
     the deployment checkpoint.
@@ -352,8 +352,20 @@ def create_parkinson_model():
         2,
     )
 
+    if checkpoint_path is None:
+        if os.path.exists(PARKINSON_CHECKPOINT):
+            checkpoint_path = PARKINSON_CHECKPOINT
+        else:
+            alt_path = os.path.join(MODELS_DIR, "parkinson_model.pth")
+            if os.path.exists(alt_path):
+                checkpoint_path = alt_path
+            else:
+                raise FileNotFoundError(
+                    f"Parkinson checkpoint not found at {PARKINSON_CHECKPOINT} or {alt_path}"
+                )
+
     checkpoint = torch.load(
-        PARKINSON_CHECKPOINT,
+        checkpoint_path,
         map_location="cpu",
     )
 
@@ -372,7 +384,7 @@ def create_parkinson_model():
 
     model.eval()
 
-    return model, checkpoint
+    return model, checkpoint, checkpoint_path
 
 
 # ---------------------------------------------------------------------
@@ -522,32 +534,17 @@ def run_parkinson_inference(path):
         -> subject aggregation
         -> real Grad-CAM
     """
-    if not os.path.exists(PARKINSON_CHECKPOINT):
-        raise FileNotFoundError(
-            "Parkinson deployment checkpoint not found: "
-            f"{PARKINSON_CHECKPOINT}"
-        )
-
     if not is_nifti_file(path):
-        img = Image.open(path).convert("L")
-        img_resized = img.resize((224, 224), Image.Resampling.BILINEAR)
-        slice_uint8 = np.array(img_resized, dtype=np.uint8)
-        slices = [slice_uint8 for _ in range(len(PARKINSON_SLICE_OFFSETS_MM))]
-        preprocessing_metadata = {
-            "original_spacing": [1.0, 1.0, 1.0],
-            "target_spacing": list(TARGET_SPACING),
-            "resampled_shape": [224, 224, len(PARKINSON_SLICE_OFFSETS_MM)],
-            "center_z": 2,
-            "z_indices": [0, 1, 2, 3, 4],
-            "slice_offsets_mm": PARKINSON_SLICE_OFFSETS_MM,
-            "input_type": "2D Image",
-        }
-    else:
-        slices, preprocessing_metadata = preprocess_parkinson_nifti(
-            path
+        raise ValueError(
+            "Parkinson's disease assessment requires a 3D NIfTI MRI volume (.nii or .nii.gz). "
+            "2D planar images are not supported for this volumetric pipeline."
         )
 
-    model, checkpoint = create_parkinson_model()
+    slices, preprocessing_metadata = preprocess_parkinson_nifti(
+        path
+    )
+
+    model, checkpoint, checkpoint_path = create_parkinson_model()
 
     tensors = [
         prepare_slice_for_model(slice_img)
@@ -669,144 +666,145 @@ def run_parkinson_inference(path):
                 ],
             }
         )
-        # Central preprocessed MRI slice used for the
-        # corresponding real Grad-CAM visualization.
-        central_slice = Image.fromarray(
-            slices[2],
-            mode="L",
-        ).convert("RGB")
-        # -----------------------------------------------------------------
-        # Render the real central-slice Grad-CAM as a heatmap overlay.
-        #
-        # gradcam_results[2]["cam"] contains the actual Grad-CAM generated
-        # from model.features[8] for the central slice.
-        # -----------------------------------------------------------------
-        central_cam = np.asarray(
-            gradcam_results[2]["cam"],
-            dtype=np.float32,
-        )
 
-        # Resize the real Grad-CAM feature map to the 224x224
-        # displayed MRI slice.
-        central_cam_image = Image.fromarray(
-            (central_cam * 255.0)
-            .clip(0, 255)
-            .astype(np.uint8),
-            mode="L",
-        )
+    # Central preprocessed MRI slice (index 2 corresponds to offset 0 mm)
+    central_slice = Image.fromarray(
+        slices[2],
+        mode="L",
+    ).convert("RGB")
 
-        central_cam_image = central_cam_image.resize(
-            central_slice.size,
-            Image.Resampling.BILINEAR,
-        )
+    # -----------------------------------------------------------------
+    # Render the real central-slice Grad-CAM as a heatmap overlay.
+    #
+    # gradcam_results[2]["cam"] contains the actual Grad-CAM generated
+    # from model.features[8] for the central slice.
+    # -----------------------------------------------------------------
+    central_cam = np.asarray(
+        gradcam_results[2]["cam"],
+        dtype=np.float32,
+    )
 
-        cam_pixels = np.asarray(
-            central_cam_image,
-            dtype=np.float32,
-        ) / 255.0
+    # Resize the real Grad-CAM feature map to the 224x224
+    # displayed MRI slice.
+    central_cam_image = Image.fromarray(
+        (central_cam * 255.0)
+        .clip(0, 255)
+        .astype(np.uint8),
+        mode="L",
+    )
 
-        # Create a colored heatmap from the real Grad-CAM values.
-        heatmap_array = np.zeros(
-            (
-                cam_pixels.shape[0],
-                cam_pixels.shape[1],
-                3,
-            ),
-            dtype=np.uint8,
-        )
+    central_cam_image = central_cam_image.resize(
+        central_slice.size,
+        Image.Resampling.BILINEAR,
+    )
 
-        low_mask = cam_pixels < 0.25
-        mid_low_mask = (
-            (cam_pixels >= 0.25)
-            & (cam_pixels < 0.5)
-        )
-        mid_high_mask = (
-            (cam_pixels >= 0.5)
-            & (cam_pixels < 0.75)
-        )
-        high_mask = cam_pixels >= 0.75
+    cam_pixels = np.asarray(
+        central_cam_image,
+        dtype=np.float32,
+    ) / 255.0
 
-        # Blue -> cyan
-        value = cam_pixels[low_mask]
-        heatmap_array[low_mask, 0] = 0
-        heatmap_array[low_mask, 1] = (
-            value * 4 * 180
-        ).clip(0, 255).astype(np.uint8)
-        heatmap_array[low_mask, 2] = (
-            255 - value * 4 * 100
-        ).clip(0, 255).astype(np.uint8)
+    # Create a colored heatmap from the real Grad-CAM values.
+    heatmap_array = np.zeros(
+        (
+            cam_pixels.shape[0],
+            cam_pixels.shape[1],
+            3,
+        ),
+        dtype=np.uint8,
+    )
 
-        # Cyan -> yellow
-        value = cam_pixels[mid_low_mask]
-        t = (value - 0.25) * 4
-        heatmap_array[mid_low_mask, 0] = 0
-        heatmap_array[mid_low_mask, 1] = (
-            180 + 75 * t
-        ).clip(0, 255).astype(np.uint8)
-        heatmap_array[mid_low_mask, 2] = (
-            155 - 155 * t
-        ).clip(0, 255).astype(np.uint8)
+    low_mask = cam_pixels < 0.25
+    mid_low_mask = (
+        (cam_pixels >= 0.25)
+        & (cam_pixels < 0.5)
+    )
+    mid_high_mask = (
+        (cam_pixels >= 0.5)
+        & (cam_pixels < 0.75)
+    )
+    high_mask = cam_pixels >= 0.75
 
-        # Yellow -> red
-        value = cam_pixels[mid_high_mask]
-        t = (value - 0.5) * 4
-        heatmap_array[mid_high_mask, 0] = (
-            255 * t
-        ).clip(0, 255).astype(np.uint8)
-        heatmap_array[mid_high_mask, 1] = 255
-        heatmap_array[mid_high_mask, 2] = 0
+    # Blue -> cyan
+    value = cam_pixels[low_mask]
+    heatmap_array[low_mask, 0] = 0
+    heatmap_array[low_mask, 1] = (
+        value * 4 * 180
+    ).clip(0, 255).astype(np.uint8)
+    heatmap_array[low_mask, 2] = (
+        255 - value * 4 * 100
+    ).clip(0, 255).astype(np.uint8)
 
-        # Red
-        value = cam_pixels[high_mask]
-        t = (value - 0.75) * 4
-        heatmap_array[high_mask, 0] = 255
-        heatmap_array[high_mask, 1] = (
-            255 - 255 * t
-        ).clip(0, 255).astype(np.uint8)
-        heatmap_array[high_mask, 2] = 0
+    # Cyan -> yellow
+    value = cam_pixels[mid_low_mask]
+    t = (value - 0.25) * 4
+    heatmap_array[mid_low_mask, 0] = 0
+    heatmap_array[mid_low_mask, 1] = (
+        180 + 75 * t
+    ).clip(0, 255).astype(np.uint8)
+    heatmap_array[mid_low_mask, 2] = (
+        155 - 155 * t
+    ).clip(0, 255).astype(np.uint8)
 
-        heatmap_rgb = Image.fromarray(
-            heatmap_array,
-            mode="RGB",
-        )
+    # Yellow -> red
+    value = cam_pixels[mid_high_mask]
+    t = (value - 0.5) * 4
+    heatmap_array[mid_high_mask, 0] = (
+        255 * t
+    ).clip(0, 255).astype(np.uint8)
+    heatmap_array[mid_high_mask, 1] = 255
+    heatmap_array[mid_high_mask, 2] = 0
 
-        # Blend the actual MRI with the actual Grad-CAM.
-        gradcam_overlay = Image.blend(
-            central_slice,
-            heatmap_rgb,
-            alpha=0.42,
-        )
+    # Red
+    value = cam_pixels[high_mask]
+    t = (value - 0.75) * 4
+    heatmap_array[high_mask, 0] = 255
+    heatmap_array[high_mask, 1] = (
+        255 - 255 * t
+    ).clip(0, 255).astype(np.uint8)
+    heatmap_array[high_mask, 2] = 0
 
-        # Encode the real Grad-CAM overlay as a data URL.
-        overlay_buffer = io.BytesIO()
+    heatmap_rgb = Image.fromarray(
+        heatmap_array,
+        mode="RGB",
+    )
 
-        gradcam_overlay.save(
-            overlay_buffer,
-            format="PNG",
-        )
+    # Blend the actual MRI with the actual Grad-CAM.
+    gradcam_overlay = Image.blend(
+        central_slice,
+        heatmap_rgb,
+        alpha=0.42,
+    )
 
-        gradcam_heatmap_base64 = base64.b64encode(
-            overlay_buffer.getvalue()
-        ).decode("utf-8")
+    # Encode the real Grad-CAM overlay as a data URL.
+    overlay_buffer = io.BytesIO()
 
-        # Also keep the original central MRI slice.
-        buffer = io.BytesIO()
+    gradcam_overlay.save(
+        overlay_buffer,
+        format="PNG",
+    )
 
-        central_slice.save(
-            buffer,
-            format="PNG",
-        )
+    gradcam_heatmap_base64 = base64.b64encode(
+        overlay_buffer.getvalue()
+    ).decode("utf-8")
 
-        central_slice_base64 = base64.b64encode(
-            buffer.getvalue()
-        ).decode("utf-8")
+    # Also keep the original central MRI slice.
+    buffer = io.BytesIO()
+
+    central_slice.save(
+        buffer,
+        format="PNG",
+    )
+
+    central_slice_base64 = base64.b64encode(
+        buffer.getvalue()
+    ).decode("utf-8")
 
     return {
         "success": True,
         "model": "EfficientNet-B0",
         "experiment": "Experiment 06 Domain-Robust",
         "checkpoint": os.path.relpath(
-            PARKINSON_CHECKPOINT,
+            checkpoint_path,
             REPO_ROOT,
         ),
         "device": str(DEVICE),
@@ -1055,6 +1053,11 @@ def run_alzheimer_inference(path):
         os.path.join(
             PACKAGES_DIR,
             "Experiment_10_Alzheimer_Inference_Package",
+            "exp10_best_checkpoint.pt",
+        ),
+        os.path.join(
+            PACKAGES_DIR,
+            "Experiment_10_Alzheimer_Inference_Package",
             "best_model.pth",
         ),
         os.path.join(
@@ -1288,6 +1291,11 @@ def main():
         # Dual mode: Parkinson analysis + Alzheimer analysis
         # -------------------------------------------------------------
         elif args.mode == "dual":
+            if not is_nifti_file(image_path):
+                raise ValueError(
+                    "Dual assessment requires a 3D NIfTI MRI volume (.nii or .nii.gz) "
+                    "to process the volumetric Parkinson pipeline alongside Alzheimer evaluation."
+                )
             parkinson_result = run_parkinson_inference(image_path)
             alzheimer_result = run_alzheimer_inference(image_path)
 

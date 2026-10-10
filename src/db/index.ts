@@ -2,7 +2,6 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { DatabaseSync } from 'node:sqlite';
-import { getFallbackGradCamSvg } from '@/utils/gradcam';
 
 export interface Patient {
   id: string;
@@ -101,13 +100,13 @@ function initSchema(db: DatabaseSync) {
     );
   `);
 
-  // Seed initial clinic patients if table is empty
+  // Seed initial anonymized demo patients if table is empty
   const patientCount = (db.prepare('SELECT count(*) as count FROM patients').get() as any)?.count || 0;
   if (patientCount === 0) {
     const seedPatients = [
       {
-        id: 'P-1024',
-        name: 'Eleanor Vance',
+        id: 'DEMO-PT-1024',
+        name: 'Demo Patient Alpha (Anonymized)',
         age: 72,
         gender: 'Female',
         bp: '135/85 mmHg',
@@ -115,11 +114,11 @@ function initSchema(db: DatabaseSync) {
         mem: 'Mild episodic memory lapses, occasional word-finding difficulties over past 6 months',
         mov: 'Normal gait, no resting tremor observed',
         hist: 'Hypertension managed on Lisinopril, family history of late-onset dementia',
-        created: '2026-10-09 09:30:00'
+        created: '2026-10-09 09:30:00',
       },
       {
-        id: 'P-1031',
-        name: 'Robert Sterling',
+        id: 'DEMO-PT-1031',
+        name: 'Demo Patient Beta (Anonymized)',
         age: 68,
         gender: 'Male',
         bp: '128/80 mmHg',
@@ -127,11 +126,11 @@ function initSchema(db: DatabaseSync) {
         mem: 'Intact short-term recall and orientation',
         mov: 'Unilateral right hand resting tremor, slight bradykinesia during finger tapping',
         hist: 'No cardiovascular events, non-smoker',
-        created: '2026-10-09 11:15:00'
+        created: '2026-10-09 11:15:00',
       },
       {
-        id: 'P-1045',
-        name: 'Margaret Chen',
+        id: 'DEMO-PT-1045',
+        name: 'Demo Patient Gamma (Anonymized)',
         age: 76,
         gender: 'Female',
         bp: '142/88 mmHg',
@@ -139,8 +138,8 @@ function initSchema(db: DatabaseSync) {
         mem: 'Gradual spatial disorientation and difficulty with complex daily activities',
         mov: 'Mild rigidity in lower extremities',
         hist: 'Type 2 diabetes, hyperlipidemia on Atorvastatin',
-        created: '2026-10-10 08:20:00'
-      }
+        created: '2026-10-10 08:20:00',
+      },
     ];
 
     const insertP = db.prepare(`
@@ -157,13 +156,13 @@ function initSchema(db: DatabaseSync) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const demoSlice = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOAAAADgCAAAAAA/RjU9AAAEzklEQVR4nO2d0ZGjMBBEW10OgXAUAuESAoFd+VxXtbX2eYWmR4j2vo/78IKkdz0YjLFUFnhDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmHMb1dH2/YXVRnD7++/++uV0zZJ7V217pfaVmi1ZlvPkhkiWJMGtUe4fNcuxpAhux+we1BTFspweXm6MZZkhvMQYyzKTXoJiWebSkyuWZTY9sWKRCW4yvTt1nUxw08WnDbEsE8anDLEsM8YnDLEsc8YnC5Ez+2F/+hQ5PsEtpzxlZVqWaePTlCln94uWKWf3ixpyer+gIef3ixnyAn4hQ17BL2LIS/gFDHkNv35DXsSv25BX8es15GX8Og3LMsxv/367fsh16Q0j2F+/0meZnuB2MMAfv11KjbAsuX4NG9dUw7Jk+jVuWxMNb8ij+b9iTzway5IV4MEjtSZFyEn8DsS9zVCie88uKXXKlAAFVwKqCDmPX47hrXMs7/qP7CovU8oDjF2I7+oIGRjM685P3j8g2BRgfHy7NkKGBvPc8yRt9Ai2BKgZ266MkPP5aQ0ZHczXTidsCfZP/FJXoco3h11Wo4wP5l+PspakrVEVoPoEvYsiJMzhpAHKIqRkMClPWmjaJMyhpEJzvqvYFTVKmMN5A9REyAHjOLVlwhzGKzTz29A9XKOEOYQ5DLeQ+339ni+4nfPEQRv7lp5gtn60fcIc4tMFt/c1MuCR5thBSJhDmEOYw9juQ566TxXcZj7Nt7zL/Jbo1WFo70E/DInsTJhDmEN8tuA2+1kCP50nPj3B9wz79VlgX8IcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcRnYe8SvqaD+EOXz/53VUSP3U9z95/fQErw9hDkN7jzlCQ70Q5hAfLrjOfp6oa2qCI/RjfRDmEOYQny641pMPwhqbfIUwhzCH0Qaya7SmC64zn+rrml+iuf7h1glzCHOI8EGYWaM1PAUZYQ4FbeRFWMcIrvUkwyqYJI8wh5g3QkWA+E2wjYwINW2yaaufr0f1hlUzDydhDjFphKIAoUtQayhrjY3bNXwqVBpW2Uy4hDkUtqWLsJ4guNZx46rCuZqJ+QyVfhAfg3W6t2O2b9p0ey0+uqqdTJyhwbzq++T9I4Jtd0hjI6zq2eBvgcH8r/v+3xolfCjhkY1bb3L3jrMmTOdPzGOY4Yekyfw7yjTpzhWPbd7+TczR8WatN1ESl0Q5EGK95JIoNWPNl6OU31V7Pm7dJXT89nwXlea0S4NV0dpnoxYa3k6aPqBnzWH2dHTScwldayoTlzHsWzOauIph55rYxEUMe9f8Jq5h2L2mOXEJw/4124krGAbWpCcuYBjwQ+iu2iDDiB9itw2HGIb8ELwvOsAw5oeua9GvbLkTH1XE/BAWzL30DsYHya37xDKN+0GQYFqZhstTJphTpoL4IBPUhyiJDzpBdYia+KAUVIaoig9SQZmiUA9aQYmiVA9qwbCiWA96wbtir2OFWg8Zgr0xysNLFDweY0Z4qYIPxzbJ+7Vsjh1SBZskU+UGCN55TDL8pPn4DJIqN0jwwdNcyulqgwXPgjCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIdnDyCbPxz/GLOtw9isAAAAAElFTkSuQmCC';
-    const gradcamDemo = getFallbackGradCamSvg('dual');
+    const demoSlice =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOAAAADgCAAAAAA/RjU9AAAEzklEQVR4nO2d0ZGjMBBEW10OgXAUAuESAoFd+VxXtbX2eYWmR4j2vo/78IKkdz0YjLFUFnhDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmHMb1dH2/YXVRnD7++/++uV0zZJ7V217pfaVmi1ZlvPkhkiWJMGtUe4fNcuxpAhux+we1BTFspweXm6MZZkhvMQYyzKTXoJiWebSkyuWZTY9sWKRCW4yvTt1nUxw08WnDbEsE8anDLEsM8YnDLEsc8YnC5Ez+2F/+hQ5PsEtpzxlZVqWaePTlCln94uWKWf3ixpyer+gIef3ixnyAn4hQ17BL2LIS/gFDHkNv35DXsSv25BX8es15GX8Og3LMsxv/367fsh16Q0j2F+/0meZnuB2MMAfv11KjbAsuX4NG9dUw7Jk+jVuWxMNb8ij+b9iTzway5IV4MEjtSZFyEn8DsS9zVCie88uKXXKlAAFVwKqCDmPX47hrXMs7/qP7CovU8oDjF2I7+oIGRjM685P3j8g2BRgfHy7NkKGBvPc8yRt9Ai2BKgZ266MkPP5aQ0ZHczXTidsCfZP/FJXoco3h11Wo4wP5l+PspakrVEVoPoEvYsiJMzhpAHKIqRkMClPWmjaJMyhpEJzvqvYFTVKmMN5A9REyAHjOLVlwhzGKzTz29A9XKOEOYQ5DLeQ+339ni+4nfPEQRv7lp5gtn60fcIc4tMFt/c1MuCR5thBSJhDmEOYw9juQ566TxXcZj7Nt7zL/Jbo1WFo70E/DInsTJhDmEN8tuA2+1kCP50nPj3B9wz79VlgX8IcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcRnYe8SvqaD+EOXz/53VUSP3U9z95/fQErw9hDkN7jzlCQ70Q5hAfLrjOfp6oa2qCI/RjfRDmEOYQny641pMPwhqbfIUwhzCH0Qaya7SmC64zn+rrml+iuf7h1glzCHOI8EGYWaM1PAUZYQ4FbeRFWMcIrvUkwyqYJI8wh5g3QkWA+E2wjYwINW2yaaufr0f1hlUzDydhDjFphKIAoUtQayhrjY3bNXwqVBpW2Uy4hDkUtqWLsJ4guNZx46rCuZqJ+QyVfhAfg3W6t2O2b9p0ey0+uqqdTJyhwbzq++T9I4Jtd0hjI6zq2eBvgcH8r/v+3xolfCjhkY1bb3L3jrMmTOdPzGOY4Yekyfw7yjTpzhWPbd7+TczR8WatN1ESl0Q5EGK95JIoNWPNl6OU31V7Pm7dJXT89nwXlea0S4NV0dpnoxYa3k6aPqBnzWH2dHTScwldayoTlzHsWzOauIph55rYxEUMe9f8Jq5h2L2mOXEJw/4124krGAbWpCcuYBjwQ+iu2iDDiB9itw2HGIb8ELwvOsAw5oeua9GvbLkTH1XE/BAWzL30DsYHya37xDKN+0GQYFqZhstTJphTpoL4IBPUhyiJDzpBdYia+KAUVIaoig9SQZmiUA9aQYmiVA9qwbCiWA96wbtir2OFWg8Zgr0xysNLFDweY0Z4qYIPxzbJ+7Vsjh1SBZskU+UGCN55TDL8pPn4DJIqN0jwwdNcyulqgwXPgjCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIdnDyCbPxz/GLOtw9isAAAAAElFTkSuQmCC';
 
     insertA.run(
-      'NA-892104',
-      'P-1024',
-      "Dual Assessment (Alzheimer's & Parkinson's)",
+      'DEMO-NA-892104',
+      'DEMO-PT-1024',
+      "Clinical Demo Dual Assessment (Alzheimer's & Parkinson's)",
       demoSlice,
       'VeryMildDemented',
       89.4,
@@ -171,7 +170,7 @@ function initSchema(db: DatabaseSync) {
       'Healthy Control',
       94.1,
       JSON.stringify({ CO: 0.941, PD: 0.059 }),
-      gradcamDemo,
+      null, // Genuine Grad-CAM not generated for static seed row
       'Cognitive: Mild episodic memory lapses. Motor: Normal gait. Medical History: Hypertension.',
       'Correlates with early-stage hippocampal microstructural change. Scheduled for 6-month cognitive follow-up.',
       'AI Analysis Completed',
