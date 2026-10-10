@@ -123,6 +123,66 @@ const [isAnalyzing, setIsAnalyzing] = useState(false);
     }
   };
 
+// Helper to optimize large images so they stay within serverless 4.5 MB request limits
+async function resizeImageIfNeeded(file: File): Promise<File> {
+  const name = file.name.toLowerCase();
+  if (!name.endsWith('.jpg') && !name.endsWith('.jpeg') && !name.endsWith('.png') && !name.endsWith('.webp')) {
+    return file;
+  }
+  if (file.size <= 2 * 1024 * 1024) {
+    return file;
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 1024;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(file);
+
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob && blob.size < file.size) {
+              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          },
+          'image/jpeg',
+          0.85
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
   const [isSaving, setIsSaving] = useState(false);
 
 const runAnalysis = async () => {
@@ -137,58 +197,50 @@ const runAnalysis = async () => {
     // ---------------------------------------------------------
     // MRI FILE VALIDATION
     // ---------------------------------------------------------
-    // Parkinson pipeline:
-    //   .nii / .nii.gz
-    //
-    // Alzheimer pipeline:
-    //   .jpg / .jpeg / .png
-    //
-    // The backend currently determines the appropriate pipeline
-    // based on the uploaded MRI format.
-    // ---------------------------------------------------------
-   const fileName = mriFile.name.toLowerCase();
+    const fileName = mriFile.name.toLowerCase();
 
-const isNifti =
-  fileName.endsWith('.nii') ||
-  fileName.endsWith('.nii.gz');
+    const isNifti =
+      fileName.endsWith('.nii') ||
+      fileName.endsWith('.nii.gz');
 
-const isSupportedImage =
-  fileName.endsWith('.jpg') ||
-  fileName.endsWith('.jpeg') ||
-  fileName.endsWith('.png');
+    const isSupportedImage =
+      fileName.endsWith('.jpg') ||
+      fileName.endsWith('.jpeg') ||
+      fileName.endsWith('.png');
 
-// ---------------------------------------------------------
-// VALIDATE MRI FORMAT BASED ON SELECTED ANALYSIS MODE
-// ---------------------------------------------------------
+    if (analysisMode === 'alzheimer' && !isSupportedImage) {
+      throw new Error(
+        "Alzheimer's analysis requires an MRI image in JPG, JPEG, or PNG format."
+      );
+    }
 
-if (analysisMode === 'alzheimer' && !isSupportedImage) {
-  throw new Error(
-    "Alzheimer's analysis requires an MRI image in JPG, JPEG, or PNG format."
-  );
-}
+    if (
+      (analysisMode === 'parkinson' || analysisMode === 'dual') &&
+      !isNifti
+    ) {
+      throw new Error(
+        analysisMode === 'dual'
+          ? 'Dual Assessment requires one 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz).'
+          : "Parkinson's analysis requires a 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz)."
+      );
+    }
 
-if (
-  (analysisMode === 'parkinson' || analysisMode === 'dual') &&
-  !isNifti
-) {
-  throw new Error(
-    analysisMode === 'dual'
-      ? 'Dual Assessment requires one 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz).'
-      : "Parkinson's analysis requires a 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz)."
-  );
-}
+    if (isNifti && mriFile.size > 4.4 * 1024 * 1024) {
+      throw new Error(
+        `The NIfTI file size is ${(mriFile.size / (1024 * 1024)).toFixed(1)} MB. Vercel free hosting has a 4.5 MB request limit. Please use a compressed .nii.gz under 4.5 MB or run locally.`
+      );
+    }
+
+    // Automatically optimize large images to fit within cloud serverless payload limits
+    const uploadFile = isSupportedImage ? await resizeImageIfNeeded(mriFile) : mriFile;
 
     // ---------------------------------------------------------
     // CREATE FORM DATA
     // ---------------------------------------------------------
-   const formData = new FormData();
-
-formData.append('mriFile', mriFile);
-formData.append(
-  'patientData',
-  JSON.stringify(patientData)
-);
-formData.append('mode', analysisMode);
+    const formData = new FormData();
+    formData.append('mriFile', uploadFile);
+    formData.append('patientData', JSON.stringify(patientData));
+    formData.append('mode', analysisMode);
 
     // ---------------------------------------------------------
     // CALL AI BACKEND
@@ -198,7 +250,19 @@ formData.append('mode', analysisMode);
       body: formData,
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any;
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (res.status === 413 || text.includes('Request Entity Too Large')) {
+        throw new Error(
+          'The uploaded MRI scan exceeds the 4.5 MB cloud limit. Please choose an image or compressed .nii.gz under 4.5 MB.'
+        );
+      }
+      throw new Error(`Server returned an error (${res.status}): ${text.slice(0, 100)}`);
+    }
 
     if (!res.ok || !data.success) {
       throw new Error(
