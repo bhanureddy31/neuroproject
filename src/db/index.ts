@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { DatabaseSync } from 'node:sqlite';
 
 export interface Patient {
@@ -42,9 +43,18 @@ let dbInstance: DatabaseSync | null = null;
 function getDb(): DatabaseSync {
   if (dbInstance) return dbInstance;
 
-  const dataDir = process.env.DATABASE_DIR || path.join(process.cwd(), 'data');
+  const dataDir =
+    process.env.DATABASE_DIR ||
+    (process.env.VERCEL
+      ? path.join(os.tmpdir(), 'neuro_data')
+      : path.join(process.cwd(), 'data'));
+
   if (!fs.existsSync(/*turbopackIgnore: true*/ dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch {
+      // In case directory already exists or cannot be created
+    }
   }
 
   const dbFile = path.join(dataDir, 'neurodiagnosis.db');
