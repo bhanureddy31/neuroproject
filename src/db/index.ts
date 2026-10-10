@@ -99,6 +99,81 @@ function initSchema(db: DatabaseSync) {
       created_at TEXT NOT NULL
     );
   `);
+
+  // Seed initial clinic patients if table is empty
+  const patientCount = (db.prepare('SELECT count(*) as count FROM patients').get() as any)?.count || 0;
+  if (patientCount === 0) {
+    const seedPatients = [
+      {
+        id: 'P-1024',
+        name: 'Eleanor Vance',
+        age: 72,
+        gender: 'Female',
+        bp: '135/85 mmHg',
+        sugar: '110 mg/dL',
+        mem: 'Mild episodic memory lapses, occasional word-finding difficulties over past 6 months',
+        mov: 'Normal gait, no resting tremor observed',
+        hist: 'Hypertension managed on Lisinopril, family history of late-onset dementia',
+        created: '2026-10-09 09:30:00'
+      },
+      {
+        id: 'P-1031',
+        name: 'Robert Sterling',
+        age: 68,
+        gender: 'Male',
+        bp: '128/80 mmHg',
+        sugar: '104 mg/dL',
+        mem: 'Intact short-term recall and orientation',
+        mov: 'Unilateral right hand resting tremor, slight bradykinesia during finger tapping',
+        hist: 'No cardiovascular events, non-smoker',
+        created: '2026-10-09 11:15:00'
+      },
+      {
+        id: 'P-1045',
+        name: 'Margaret Chen',
+        age: 76,
+        gender: 'Female',
+        bp: '142/88 mmHg',
+        sugar: '122 mg/dL',
+        mem: 'Gradual spatial disorientation and difficulty with complex daily activities',
+        mov: 'Mild rigidity in lower extremities',
+        hist: 'Type 2 diabetes, hyperlipidemia on Atorvastatin',
+        created: '2026-10-10 08:20:00'
+      }
+    ];
+
+    const insertP = db.prepare(`
+      INSERT INTO patients (id, name, age, gender, blood_pressure, blood_sugar, memory_info, movement_info, medical_history, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const p of seedPatients) {
+      insertP.run(p.id, p.name, p.age, p.gender, p.bp, p.sugar, p.mem, p.mov, p.hist, p.created);
+    }
+
+    const insertA = db.prepare(`
+      INSERT INTO assessments (id, patient_id, assessment_type, mri_image, alzheimer_class, alzheimer_confidence, alzheimer_probs, parkinson_class, parkinson_confidence, parkinson_probs, gradcam_heatmap, clinical_notes, doctor_review, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertA.run(
+      'NA-892104',
+      'P-1024',
+      "Dual Assessment (Alzheimer's & Parkinson's)",
+      null,
+      'VeryMildDemented',
+      89.4,
+      JSON.stringify({ NonDemented: 0.082, VeryMildDemented: 0.894, MildDemented: 0.021, ModerateDemented: 0.003 }),
+      'Healthy Control',
+      94.1,
+      JSON.stringify({ CO: 0.941, PD: 0.059 }),
+      null,
+      'Cognitive: Mild episodic memory lapses. Motor: Normal gait. Medical History: Hypertension.',
+      'Correlates with early-stage hippocampal microstructural change. Scheduled for 6-month cognitive follow-up.',
+      'AI Analysis Completed',
+      '2026-10-09 10:00:00'
+    );
+  }
 }
 
 // Database helper functions
