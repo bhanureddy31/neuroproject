@@ -81,12 +81,26 @@ const [isAnalyzing, setIsAnalyzing] = useState(false);
     setPatientData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setMriFile(file);
 
-      if (file.name.toLowerCase().endsWith('.nii') || file.name.toLowerCase().endsWith('.nii.gz')) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.nii') || lowerName.endsWith('.nii.gz')) {
+        try {
+          const sliceFile = await extractSliceFromNifti(file);
+          if (sliceFile !== file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              setMriPreview(reader.result as string);
+            };
+            reader.readAsDataURL(sliceFile);
+            return;
+          }
+        } catch {
+          // fallback
+        }
         setMriPreview('');
         return;
       }
@@ -103,14 +117,28 @@ const [isAnalyzing, setIsAnalyzing] = useState(false);
     e.preventDefault();
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       setMriFile(file);
 
-      if (file.name.toLowerCase().endsWith('.nii') || file.name.toLowerCase().endsWith('.nii.gz')) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.nii') || lowerName.endsWith('.nii.gz')) {
+        try {
+          const sliceFile = await extractSliceFromNifti(file);
+          if (sliceFile !== file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              setMriPreview(reader.result as string);
+            };
+            reader.readAsDataURL(sliceFile);
+            return;
+          }
+        } catch {
+          // fallback
+        }
         setMriPreview('');
         return;
       }
@@ -122,6 +150,142 @@ const [isAnalyzing, setIsAnalyzing] = useState(false);
       reader.readAsDataURL(file);
     }
   };
+
+// Helper to extract central axial slice from NIfTI (.nii or .nii.gz) volume directly in browser
+async function extractSliceFromNifti(file: File): Promise<File> {
+  let targetBlob: Blob = file;
+
+  if (file.name.toLowerCase().endsWith('.nii.gz')) {
+    try {
+      if (typeof DecompressionStream !== 'undefined') {
+        const ds = new DecompressionStream('gzip');
+        const decompressedStream = file.stream().pipeThrough(ds);
+        const res = new Response(decompressedStream);
+        targetBlob = await res.blob();
+      }
+    } catch {
+      return file;
+    }
+  }
+
+  return new Promise((resolve) => {
+    const headerBlob = targetBlob.slice(0, 352);
+    const headerReader = new FileReader();
+
+    headerReader.onload = () => {
+      try {
+        const buffer = headerReader.result as ArrayBuffer;
+        const view = new DataView(buffer);
+
+        let littleEndian = true;
+        const sizeof_hdr = view.getInt32(0, true);
+        if (sizeof_hdr !== 348) {
+          if (view.getInt32(0, false) === 348) {
+            littleEndian = false;
+          } else {
+            return resolve(file);
+          }
+        }
+
+        const nx = view.getInt16(42, littleEndian);
+        const ny = view.getInt16(44, littleEndian);
+        const nz = view.getInt16(46, littleEndian);
+        const datatype = view.getInt16(70, littleEndian);
+        const bitpix = view.getInt16(72, littleEndian);
+        const vox_offset = Math.max(352, Math.round(view.getFloat32(108, littleEndian)) || 352);
+
+        if (nx <= 0 || ny <= 0 || nz <= 0 || nx > 2048 || ny > 2048) {
+          return resolve(file);
+        }
+
+        const bytesPerVoxel = Math.max(1, Math.round(bitpix / 8));
+        const sliceBytes = nx * ny * bytesPerVoxel;
+        const centerZ = Math.floor(nz / 2);
+        const sliceStart = vox_offset + (centerZ * sliceBytes);
+        const sliceEnd = sliceStart + sliceBytes;
+
+        const sliceBlob = targetBlob.slice(sliceStart, sliceEnd);
+        const sliceReader = new FileReader();
+
+        sliceReader.onload = () => {
+          try {
+            const sliceBuf = sliceReader.result as ArrayBuffer;
+            const sliceView = new DataView(sliceBuf);
+
+            let minVal = Infinity;
+            let maxVal = -Infinity;
+            const numPixels = nx * ny;
+            const pixels = new Float32Array(numPixels);
+
+            for (let i = 0; i < numPixels; i++) {
+              let val = 0;
+              const byteOffset = i * bytesPerVoxel;
+              if (byteOffset + bytesPerVoxel <= sliceBuf.byteLength) {
+                if (bytesPerVoxel === 1) {
+                  val = sliceView.getUint8(byteOffset);
+                } else if (bytesPerVoxel === 2) {
+                  val = datatype === 512
+                    ? sliceView.getUint16(byteOffset, littleEndian)
+                    : sliceView.getInt16(byteOffset, littleEndian);
+                } else if (bytesPerVoxel === 4) {
+                  val = sliceView.getFloat32(byteOffset, littleEndian);
+                }
+              }
+              pixels[i] = val;
+              if (val > 0) {
+                if (val < minVal) minVal = val;
+                if (val > maxVal) maxVal = val;
+              }
+            }
+
+            if (minVal === Infinity) minVal = 0;
+            if (maxVal <= minVal) maxVal = minVal + 1;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = nx;
+            canvas.height = ny;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(file);
+
+            const imgData = ctx.createImageData(nx, ny);
+            for (let i = 0; i < numPixels; i++) {
+              const normalized = Math.min(255, Math.max(0, Math.round(((pixels[i] - minVal) / (maxVal - minVal)) * 255)));
+              const pIdx = i * 4;
+              imgData.data[pIdx] = normalized;
+              imgData.data[pIdx + 1] = normalized;
+              imgData.data[pIdx + 2] = normalized;
+              imgData.data[pIdx + 3] = 255;
+            }
+            ctx.putImageData(imgData, 0, 0);
+
+            canvas.toBlob((blob) => {
+              if (blob) {
+                const cleanName = file.name.replace(/\.nii(\.gz)?$/i, '');
+                const extractedFile = new File([blob], `${cleanName}_axial_slice.png`, {
+                  type: 'image/png',
+                  lastModified: Date.now(),
+                });
+                resolve(extractedFile);
+              } else {
+                resolve(file);
+              }
+            }, 'image/png');
+          } catch {
+            resolve(file);
+          }
+        };
+
+        sliceReader.onerror = () => resolve(file);
+        sliceReader.readAsArrayBuffer(sliceBlob);
+      } catch {
+        resolve(file);
+      }
+    };
+
+    headerReader.onerror = () => resolve(file);
+    headerReader.readAsArrayBuffer(headerBlob);
+  });
+}
 
 // Helper to optimize large images so they stay within serverless 4.5 MB request limits
 async function resizeImageIfNeeded(file: File): Promise<File> {
@@ -191,11 +355,11 @@ const runAnalysis = async () => {
 
   try {
     if (!mriFile) {
-      throw new Error('Please upload an MRI file before starting the analysis.');
+      throw new Error('Please upload an MRI file or select the demo scan before starting the analysis.');
     }
 
     // ---------------------------------------------------------
-    // MRI FILE VALIDATION
+    // MRI FILE VALIDATION & CLIENT-SIDE SMART PROCESSING
     // ---------------------------------------------------------
     const fileName = mriFile.name.toLowerCase();
 
@@ -206,33 +370,36 @@ const runAnalysis = async () => {
     const isSupportedImage =
       fileName.endsWith('.jpg') ||
       fileName.endsWith('.jpeg') ||
-      fileName.endsWith('.png');
+      fileName.endsWith('.png') ||
+      fileName.endsWith('.webp');
 
-    if (analysisMode === 'alzheimer' && !isSupportedImage) {
+    if (!isSupportedImage && !isNifti) {
       throw new Error(
-        "Alzheimer's analysis requires an MRI image in JPG, JPEG, or PNG format."
+        'Unsupported file format. Please upload a brain MRI scan (.jpg, .jpeg, .png, .webp, .nii, or .nii.gz).'
       );
     }
 
-    if (
-      (analysisMode === 'parkinson' || analysisMode === 'dual') &&
-      !isNifti
-    ) {
-      throw new Error(
-        analysisMode === 'dual'
-          ? 'Dual Assessment requires one 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz).'
-          : "Parkinson's analysis requires a 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz)."
-      );
+    let uploadFile = mriFile;
+
+    // Automatically slice NIfTI volumes (.nii / .nii.gz) right in the browser to stay within serverless limits
+    if (isNifti) {
+      try {
+        const sliceFile = await extractSliceFromNifti(mriFile);
+        if (sliceFile !== mriFile) {
+          uploadFile = sliceFile;
+        }
+      } catch (err) {
+        console.warn('Browser NIfTI slicing skipped:', err);
+      }
+    } else if (isSupportedImage) {
+      uploadFile = await resizeImageIfNeeded(mriFile);
     }
 
-    if (isNifti && mriFile.size > 4.4 * 1024 * 1024) {
+    if (uploadFile.size > 4.4 * 1024 * 1024) {
       throw new Error(
-        `The NIfTI file size is ${(mriFile.size / (1024 * 1024)).toFixed(1)} MB. Vercel free hosting has a 4.5 MB request limit. Please use a compressed .nii.gz under 4.5 MB or run locally.`
+        `The file size (${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB cloud limit. Please choose a file under 4.5 MB or use the demo MRI scan.`
       );
     }
-
-    // Automatically optimize large images to fit within cloud serverless payload limits
-    const uploadFile = isSupportedImage ? await resizeImageIfNeeded(mriFile) : mriFile;
 
     // ---------------------------------------------------------
     // CREATE FORM DATA
@@ -258,7 +425,7 @@ const runAnalysis = async () => {
     } catch {
       if (res.status === 413 || text.includes('Request Entity Too Large')) {
         throw new Error(
-          'The uploaded MRI scan exceeds the 4.5 MB cloud limit. Please choose an image or compressed .nii.gz under 4.5 MB.'
+          'The uploaded MRI scan exceeds the 4.5 MB cloud limit. Please choose an image under 4.5 MB or use the demo scan.'
         );
       }
       throw new Error(`Server returned an error (${res.status}): ${text.slice(0, 100)}`);
@@ -911,7 +1078,20 @@ pdf.save(
                 <button
                   type="button"
                   onClick={() => {
-                    setMriPreview('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOAAAADgCAAAAAA/RjU9AAAEzklEQVR4nO2d0ZGjMBBEW10OgXAUAuESAoFd+VxXtbX2eYWmR4j2vo/78IKkdz0YjLFUFnhDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmHMb1dH2/YXVRnD7++/++uV0zZJ7V217pfaVmi1ZlvPkhkiWJMGtUe4fNcuxpAhux+we1BTFspweXm6MZZkhvMQYyzKTXoJiWebSkyuWZTY9sWKRCW4yvTt1nUxw08WnDbEsE8anDLEsM8YnDLEsc8YnC5Ez+2F/+hQ5PsEtpzxlZVqWaePTlCln94uWKWf3ixpyer+gIef3ixnyAn4hQ17BL2LIS/gFDHkNv35DXsSv25BX8es15GX8Og3LMsxv/367fsh16Q0j2F+/0meZnuB2MMAfv11KjbAsuX4NG9dUw7Jk+jVuWxMNb8ij+b9iTzway5IV4MEjtSZFyEn8DsS9zVCie88uKXXKlAAFVwKqCDmPX47hrXMs7/qP7CovU8oDjF2I7+oIGRjM685P3j8g2BRgfHy7NkKGBvPc8yRt9Ai2BKgZ266MkPP5aQ0ZHczXTidsCfZP/FJXoco3h11Wo4wP5l+PspakrVEVoPoEvYsiJMzhpAHKIqRkMClPWmjaJMyhpEJzvqvYFTVKmMN5A9REyAHjOLVlwhzGKzTz29A9XKOEOYQ5DLeQ+339ni+4nfPEQRv7lp5gtn60fcIc4tMFt/c1MuCR5thBSJhDmEOYw9juQ566TxXcZj7Nt7zL/Jbo1WFo70E/DInsTJhDmEN8tuA2+1kCP50nPj3B9wz79VlgX8IcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcRnYe8SvqaD+EOXz/53VUSP3U9z95/fQErw9hDkN7jzlCQ70Q5hAfLrjOfp6oa2qCI/RjfRDmEOYQny641pMPwhqbfIUwhzCH0Qaya7SmC64zn+rrml+iuf7h1glzCHOI8EGYWaM1PAUZYQ4FbeRFWMcIrvUkwyqYJI8wh5g3QkWA+E2wjYwINW2yaaufr0f1hlUzDydhDjFphKIAoUtQayhrjY3bNXwqVBpW2Uy4hDkUtqWLsJ4guNZx46rCuZqJ+QyVfhAfg3W6t2O2b9p0ey0+uqqdTJyhwbzq++T9I4Jtd0hjI6zq2eBvgcH8r/v+3xolfCjhkY1bb3L3jrMmTOdPzGOY4Yekyfw7yjTpzhWPbd7+TczR8WatN1ESl0Q5EGK95JIoNWPNl6OU31V7Pm7dJXT89nwXlea0S4NV0dpnoxYa3k6aPqBnzWH2dHTScwldayoTlzHsWzOauIph55rYxEUMe9f8Jq5h2L2mOXEJw/4124krGAbWpCcuYBjwQ+iu2iDDiB9itw2HGIb8ELwvOsAw5oeua9GvbLkTH1XE/BAWzL30DsYHya37xDKN+0GQYFqZhstTJphTpoL4IBPUhyiJDzpBdYia+KAUVIaoig9SQZmiUA9aQYmiVA9qwbCiWA96wbtir2OFWg8Zgr0xysNLFDweY0Z4qYIPxzbJ+7Vsjh1SBZskU+UGCN55TDL8pPn4DJIqN0jwwdNcyulqgwXPgjCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIdnDyCbPxz/GLOtw9isAAAAAElFTkSuQmCC');
+                    const demoBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOAAAADgCAAAAAA/RjU9AAAEzklEQVR4nO2d0ZGjMBBEW10OgXAUAuESAoFd+VxXtbX2eYWmR4j2vo/78IKkdz0YjLFUFnhDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmEOYQ5hDmHMb1dH2/YXVRnD7++/++uV0zZJ7V217pfaVmi1ZlvPkhkiWJMGtUe4fNcuxpAhux+we1BTFspweXm6MZZkhvMQYyzKTXoJiWebSkyuWZTY9sWKRCW4yvTt1nUxw08WnDbEsE8anDLEsM8YnDLEsc8YnC5Ez+2F/+hQ5PsEtpzxlZVqWaePTlCln94uWKWf3ixpyer+gIef3ixnyAn4hQ17BL2LIS/gFDHkNv35DXsSv25BX8es15GX8Og3LMsxv/367fsh16Q0j2F+/0meZnuB2MMAfv11KjbAsuX4NG9dUw7Jk+jVuWxMNb8ij+b9iTzway5IV4MEjtSZFyEn8DsS9zVCie88uKXXKlAAFVwKqCDmPX47hrXMs7/qP7CovU8oDjF2I7+oIGRjM685P3j8g2BRgfHy7NkKGBvPc8yRt9Ai2BKgZ266MkPP5aQ0ZHczXTidsCfZP/FJXoco3h11Wo4wP5l+PspakrVEVoPoEvYsiJMzhpAHKIqRkMClPWmjaJMyhpEJzvqvYFTVKmMN5A9REyAHjOLVlwhzGKzTz29A9XKOEOYQ5DLeQ+339ni+4nfPEQRv7lp5gtn60fcIc4tMFt/c1MuCR5thBSJhDmEOYw9juQ566TxXcZj7Nt7zL/Jbo1WFo70E/DInsTJhDmEN8tuA2+1kCP50nPj3B9wz79VlgX8IcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcRnYe8SvqaD+EOXz/53VUSP3U9z95/fQErw9hDkN7jzlCQ70Q5hAfLrjOfp6oa2qCI/RjfRDmEOYQny641pMPwhqbfIUwhzCH0Qaya7SmC64zn+rrml+iuf7h1glzCHOI8EGYWaM1PAUZYQ4FbeRFWMcIrvUkwyqYJI8wh5g3QkWA+E2wjYwINW2yaaufr0f1hlUzDydhDjFphKIAoUtQayhrjY3bNXwqVBpW2Uy4hDkUtqWLsJ4guNZx46rCuZqJ+QyVfhAfg3W6t2O2b9p0ey0+uqqdTJyhwbzq++T9I4Jtd0hjI6zq2eBvgcH8r/v+3xolfCjhkY1bb3L3jrMmTOdPzGOY4Yekyfw7yjTpzhWPbd7+TczR8WatN1ESl0Q5EGK95JIoNWPNl6OU31V7Pm7dJXT89nwXlea0S4NV0dpnoxYa3k6aPqBnzWH2dHTScwldayoTlzHsWzOauIph55rYxEUMe9f8Jq5h2L2mOXEJw/4124krGAbWpCcuYBjwQ+iu2iDDiB9itw2HGIb8ELwvOsAw5oeua9GvbLkTH1XE/BAWzL30DsYHya37xDKN+0GQYFqZhstTJphTpoL4IBPUhyiJDzpBdYia+KAUVIaoig9SQZmiUA9aQYmiVA9qwbCiWA96wbtir2OFWg8Zgr0xysNLFDweY0Z4qYIPxzbJ+7Vsjh1SBZskU+UGCN55TDL8pPn4DJIqN0jwwdNcyulqgwXPgjCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIcwhzCHMIdnDyCbPxz/GLOtw9isAAAAAElFTkSuQmCC';
+                    try {
+                      const binaryString = atob(demoBase64.split(',')[1]);
+                      const bytes = new Uint8Array(binaryString.length);
+                      for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                      }
+                      const demoBlob = new Blob([bytes], { type: 'image/png' });
+                      const demoFile = new File([demoBlob], 'clinical_demo_axial_mri.png', { type: 'image/png' });
+                      setMriFile(demoFile);
+                    } catch (e) {
+                      console.error('Error creating demo scan file:', e);
+                    }
+                    setMriPreview(demoBase64);
                   }}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#EEF4F0] hover:bg-[#DDE7E1] text-[#3D8062] rounded-xl text-xs font-bold transition-all border border-[#DDE7E1] cursor-pointer shadow-xs"
                 >
@@ -920,16 +1100,14 @@ pdf.save(
               </div>
 
               <div className="mt-6 flex items-center justify-between text-xs text-[#78858A] bg-[#EEF4F0] p-4 rounded-xl">
-              <span>
-  {analysisMode === 'alzheimer' &&
-    'Alzheimer: JPG/JPEG/PNG MRI image'}
-
-  {analysisMode === 'parkinson' &&
-    'Parkinson: 3D T1-weighted NIfTI (.nii/.nii.gz)'}
-
-  {analysisMode === 'dual' &&
-    'Dual: One 3D T1-weighted NIfTI (.nii/.nii.gz) → Both Models'}
-</span>
+                <span>
+                  {analysisMode === 'alzheimer' &&
+                    "Alzheimer's: Axial Brain MRI (JPG, PNG, WebP, or NIfTI)"}
+                  {analysisMode === 'parkinson' &&
+                    "Parkinson's: Brain MRI (PNG, JPG, or NIfTI volume)"}
+                  {analysisMode === 'dual' &&
+                    "Dual Assessment: Single Brain MRI Scan evaluated by both models"}
+                </span>
                 <span className="font-mono text-[#3D8062] font-semibold">Trained EfficientNet-B0 Compatible</span>
               </div>
             </div>

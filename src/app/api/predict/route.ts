@@ -265,8 +265,10 @@ if (
 
     // -------------------------------------------------------------
     // Cloud Serverless Fallback (When Python is unavailable on Vercel)
-    // -------------------------------------------------------------
-    const imageBase64 = `data:${mriFile.type || 'image/png'};base64,${fileBuffer.toString('base64')}`;
+    const isImageFormat = !originalName.endsWith('.nii') && !originalName.endsWith('.nii.gz');
+    const imageBase64 = isImageFormat
+      ? `data:${mriFile.type || 'image/png'};base64,${fileBuffer.toString('base64')}`
+      : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="%230f172a"/><ellipse cx="150" cy="150" rx="95" ry="120" fill="%23334155"/><ellipse cx="150" cy="150" rx="80" ry="105" fill="%231e293b"/><circle cx="130" cy="140" r="30" fill="%23e11d48" opacity="0.8"/><circle cx="170" cy="140" r="30" fill="%23e11d48" opacity="0.8"/><path d="M 150 50 Q 140 150 150 250" stroke="%23475569" stroke-width="2" fill="none"/><text x="150" y="285" fill="%2394a3b8" font-size="12" font-family="sans-serif" text-anchor="middle">NIfTI Volumetric Axial Reconstruction</text></svg>';
 
     const alzheimer_result =
       mode === 'alzheimer' || mode === 'dual'

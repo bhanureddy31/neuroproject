@@ -43,8 +43,8 @@ export default function DashboardHomePage() {
     loadData();
   }, []);
 
-  const completedCount = assessments.filter(a => a.status === 'Completed').length;
-  const pendingCount = assessments.filter(a => a.status === 'Pending Review').length;
+  const completedCount = assessments.filter(a => a.status === 'Completed' || a.status === 'AI Analysis Completed').length;
+  const pendingCount = assessments.filter(a => a.status === 'Pending Review' || a.status === 'Pending').length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">

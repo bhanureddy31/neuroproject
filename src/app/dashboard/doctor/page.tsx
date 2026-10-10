@@ -1,9 +1,11 @@
 'use client';
 
 import React from 'react';
+import { useRouter } from 'next/navigation';
 import { Mail, Clock, Shield, Star, Activity, CheckCircle, FileText, Settings, User } from 'lucide-react';
 
 export default function DoctorPage() {
+  const router = useRouter();
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6 text-[#24333B]">
       <div>
@@ -90,14 +92,26 @@ export default function DoctorPage() {
           <div className="bg-white rounded-2xl border border-[#DDE7E1] p-6 shadow-[0_8px_24px_rgba(36,51,59,0.055)]">
             <h3 className="text-lg font-bold mb-4">Quick Actions</h3>
             <div className="flex flex-wrap gap-4">
-              <button className="bg-[#3D8062] hover:bg-[#346D54] text-white px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors">
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard/new-assessment')}
+                className="bg-[#3D8062] hover:bg-[#346D54] text-white px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors cursor-pointer"
+              >
                 <FileText className="w-5 h-5" /> Start New Assessment
               </button>
-              <button className="border border-[#3D8062] text-[#3D8062] hover:bg-[#EEF4F0] px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors">
-                <CheckCircle className="w-5 h-5" /> View All Reports
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard/history')}
+                className="border border-[#3D8062] text-[#3D8062] hover:bg-[#EEF4F0] px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <CheckCircle className="w-5 h-5" /> View Assessment History
               </button>
-              <button className="border border-[#DDE7E1] text-[#24333B] hover:bg-[#F4F8F5] px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors">
-                <Settings className="w-5 h-5" /> Update Profile
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard/settings')}
+                className="border border-[#DDE7E1] text-[#24333B] hover:bg-[#F4F8F5] px-5 py-2.5 rounded-[10px] flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <Settings className="w-5 h-5" /> Settings & Config
               </button>
             </div>
           </div>
