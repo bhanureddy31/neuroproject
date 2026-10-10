@@ -57,27 +57,47 @@ export async function POST(req: NextRequest) {
       id: assessmentId,
       patientId,
       assessmentType,
+
       mriImage: mriImage || null,
-      alzheimerClass: alzheimerClass || 'Non Demented',
-      alzheimerConfidence: alzheimerConfidence ? Number(alzheimerConfidence) : 91.4,
-      alzheimerProbs: typeof alzheimerProbs === 'object' ? JSON.stringify(alzheimerProbs) : alzheimerProbs || null,
-      parkinsonClass: parkinsonClass || 'Healthy Control',
-      parkinsonConfidence: parkinsonConfidence ? Number(parkinsonConfidence) : 86.8,
-      parkinsonProbs: typeof parkinsonProbs === 'object' ? JSON.stringify(parkinsonProbs) : parkinsonProbs || null,
+
+      alzheimerClass: alzheimerClass || null,
+      alzheimerConfidence:
+        alzheimerConfidence !== undefined && alzheimerConfidence !== null
+          ? Number(alzheimerConfidence)
+          : null,
+      alzheimerProbs:
+        typeof alzheimerProbs === 'object'
+          ? JSON.stringify(alzheimerProbs)
+          : alzheimerProbs || null,
+
+      parkinsonClass: parkinsonClass || null,
+      parkinsonConfidence:
+        parkinsonConfidence !== undefined && parkinsonConfidence !== null
+          ? Number(parkinsonConfidence)
+          : null,
+      parkinsonProbs:
+        typeof parkinsonProbs === 'object'
+          ? JSON.stringify(parkinsonProbs)
+          : parkinsonProbs || null,
+
       gradcamHeatmap: gradcamHeatmap || null,
       clinicalNotes: clinicalNotes || null,
-      doctorReview: doctorReview || 'Dr. Ananya Rao (DR-0148) — Verified',
-      status: status || 'Completed',
+
+      doctorReview: doctorReview || 'Pending clinical review',
+      status: status || 'AI Analysis Completed',
+
       createdAt: now,
     });
 
     return NextResponse.json({ success: true, data: record });
   } catch (error: any) {
     console.error('Error saving assessment:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 }
+    );
   }
 }
-
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);

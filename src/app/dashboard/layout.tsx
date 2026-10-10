@@ -1,18 +1,23 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  FilePlus, 
-  Users, 
-  Clock, 
-  FileText, 
-  UserCircle, 
-  Settings, 
-  Info, 
+import { useState } from 'react';
+import {
+  LayoutDashboard,
+  FilePlus,
+  Users,
+  Clock,
+  FileText,
+  UserCircle,
+  Settings,
+  Info,
   LogOut,
   Sun,
-  Moon
+  Moon,
+  Menu,
+  X,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useSettings } from '@/context/SettingsContext';
 
@@ -38,102 +43,416 @@ const pageTitles: Record<string, string> = {
   '/dashboard/about': 'About',
 };
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, toggleTheme } = useSettings();
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
   const title = pageTitles[pathname] || 'Dashboard';
 
+  const navigate = (href: string) => {
+    router.push(href);
+    setMobileSidebarOpen(false);
+  };
+
   return (
-    <div className="flex h-screen bg-bg">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-0 bottom-0 w-[260px] bg-card border-r border-border flex flex-col z-20">
-        {/* Brand */}
-        <div 
-          onClick={() => router.push('/dashboard')}
-          className="h-20 flex items-center px-6 border-b border-border cursor-pointer"
+    <div className="flex h-screen bg-bg overflow-hidden">
+
+      {/* =========================================================
+          MOBILE OVERLAY
+      ========================================================== */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* =========================================================
+          SIDEBAR
+      ========================================================== */}
+      <aside
+        className={`
+          fixed left-0 top-0 bottom-0
+          bg-card border-r border-border
+          flex flex-col z-50
+          transition-all duration-300 ease-in-out
+
+          w-[260px]
+
+          ${sidebarCollapsed ? 'md:w-[76px]' : 'md:w-[260px]'}
+
+          ${
+            mobileSidebarOpen
+              ? 'translate-x-0'
+              : '-translate-x-full md:translate-x-0'
+          }
+        `}
+      >
+
+        {/* =====================================================
+            BRAND
+        ====================================================== */}
+        <div
+          onClick={() => navigate('/dashboard')}
+          className={`
+            h-20 flex items-center
+            border-b border-border
+            cursor-pointer shrink-0
+            transition-all duration-300
+
+            ${sidebarCollapsed ? 'md:justify-center md:px-0' : 'px-6'}
+          `}
         >
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-bold mr-3 shrink-0 shadow-sm">
+          <div
+            className="
+              w-8 h-8 rounded-full
+              bg-primary
+              flex items-center justify-center
+              text-white font-bold
+              shrink-0 shadow-sm
+            "
+          >
             N
           </div>
-          <span className="text-xl font-extrabold text-navy tracking-tight">NeuroDiagnosis</span>
+
+          <span
+            className={`
+              text-xl font-extrabold
+              text-navy tracking-tight
+              ml-3 whitespace-nowrap
+              transition-all duration-200
+
+              ${sidebarCollapsed ? 'md:hidden' : ''}
+            `}
+          >
+            NeuroDiagnosis
+          </span>
+
+          {/* Mobile close button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMobileSidebarOpen(false);
+            }}
+            className="
+              ml-auto
+              p-2 rounded-lg
+              text-muted
+              hover:bg-soft
+              hover:text-slate
+              transition-colors
+              md:hidden
+            "
+            aria-label="Close navigation"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Nav Links */}
+        {/* =====================================================
+            NAVIGATION
+        ====================================================== */}
         <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-1">
           {navLinks.map((link) => {
             const isActive = pathname === link.href;
             const Icon = link.icon;
+
             return (
               <button
                 key={link.href}
-                onClick={() => router.push(link.href)}
-                className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-[10px] text-sm transition-colors cursor-pointer ${
-                  isActive 
-                    ? 'bg-soft text-primary font-semibold shadow-xs' 
-                    : 'text-muted hover:bg-soft hover:text-slate'
-                }`}
+                onClick={() => navigate(link.href)}
+                title={sidebarCollapsed ? link.label : undefined}
+                className={`
+                  w-full
+                  flex items-center
+                  rounded-[10px]
+                  text-sm
+                  transition-all duration-200
+                  cursor-pointer
+
+                  ${
+                    sidebarCollapsed
+                      ? 'md:justify-center md:px-0'
+                      : 'space-x-3 px-3'
+                  }
+
+                  px-3 py-2.5
+
+                  ${
+                    isActive
+                      ? 'bg-soft text-primary font-semibold shadow-xs'
+                      : 'text-muted hover:bg-soft hover:text-slate'
+                  }
+                `}
               >
                 <Icon className="w-5 h-5 shrink-0" />
-                <span>{link.label}</span>
+
+                <span
+                  className={`
+                    whitespace-nowrap
+                    transition-all duration-200
+
+                    ${sidebarCollapsed ? 'md:hidden' : ''}
+                  `}
+                >
+                  {link.label}
+                </span>
               </button>
             );
           })}
         </nav>
 
-        {/* Logout */}
+        {/* =====================================================
+            LOGOUT
+        ====================================================== */}
         <div className="p-4 border-t border-border">
           <button
-            onClick={() => router.push('/')}
-            className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-[10px] text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer font-medium"
+            onClick={() => navigate('/')}
+            title={sidebarCollapsed ? 'Sign Out' : undefined}
+            className={`
+              w-full
+              flex items-center
+              px-3 py-2.5
+              rounded-[10px]
+              text-sm
+              text-red-500
+              hover:bg-red-50
+              dark:hover:bg-red-950/30
+              transition-all
+              cursor-pointer
+              font-medium
+
+              ${
+                sidebarCollapsed
+                  ? 'md:justify-center md:px-0'
+                  : 'space-x-3'
+              }
+            `}
           >
             <LogOut className="w-5 h-5 shrink-0" />
-            <span>Sign Out</span>
+
+            <span
+              className={`
+                whitespace-nowrap
+                ${sidebarCollapsed ? 'md:hidden' : ''}
+              `}
+            >
+              Sign Out
+            </span>
           </button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 ml-[260px] flex flex-col h-full overflow-hidden">
-        {/* Header */}
-        <header className="h-20 bg-card border-b border-border flex items-center justify-between px-8 shrink-0 z-10">
-          <div>
-            <div className="text-xs text-muted font-medium uppercase tracking-wider mb-0.5">Clinical workspace</div>
-            <h1 className="text-xl font-bold text-navy">{title}</h1>
+      {/* =========================================================
+          MAIN CONTENT
+      ========================================================== */}
+      <main
+        className={`
+          flex-1
+          flex flex-col
+          h-full
+          overflow-hidden
+          ml-0
+          transition-all duration-300 ease-in-out
+
+          ${
+            sidebarCollapsed
+              ? 'md:ml-[76px]'
+              : 'md:ml-[260px]'
+          }
+        `}
+      >
+
+        {/* =====================================================
+            HEADER
+        ====================================================== */}
+        <header
+          className="
+            h-20
+            bg-card
+            border-b border-border
+            flex items-center
+            justify-between
+            px-4 sm:px-6 md:px-8
+            shrink-0
+            z-10
+          "
+        >
+
+          {/* LEFT SIDE */}
+          <div className="flex items-center min-w-0">
+
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(true)}
+              className="
+                p-2
+                mr-3
+                rounded-lg
+                text-muted
+                hover:bg-soft
+                hover:text-slate
+                transition-colors
+                md:hidden
+              "
+              aria-label="Open navigation"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+
+            {/* Desktop collapse button */}
+            <button
+              type="button"
+              onClick={() =>
+                setSidebarCollapsed((prev) => !prev)
+              }
+              className="
+                hidden md:flex
+                p-2
+                mr-3
+                rounded-lg
+                border border-border
+                text-muted
+                hover:bg-soft
+                hover:text-slate
+                transition-all
+                items-center
+                justify-center
+              "
+              title={
+                sidebarCollapsed
+                  ? 'Expand Sidebar'
+                  : 'Collapse Sidebar'
+              }
+              aria-label={
+                sidebarCollapsed
+                  ? 'Expand Sidebar'
+                  : 'Collapse Sidebar'
+              }
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="w-4 h-4" />
+              ) : (
+                <ChevronLeft className="w-4 h-4" />
+              )}
+            </button>
+
+            <div className="min-w-0">
+              <div
+                className="
+                  text-xs
+                  text-muted
+                  font-medium
+                  uppercase
+                  tracking-wider
+                  mb-0.5
+                "
+              >
+                Clinical workspace
+              </div>
+
+              <h1 className="text-xl font-bold text-navy truncate">
+                {title}
+              </h1>
+            </div>
           </div>
-          
-          <div className="flex items-center space-x-3">
-            {/* Quick Theme Toggle */}
+
+          {/* =================================================
+              RIGHT SIDE
+          ================================================== */}
+          <div className="flex items-center space-x-2 sm:space-x-3">
+
+            {/* Theme Toggle */}
             <button
               type="button"
               onClick={toggleTheme}
-              className="p-2 rounded-xl border border-border text-muted hover:text-slate hover:bg-soft transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-              title={theme === 'dark' ? 'Switch to Light Clinical Theme' : 'Switch to Dark Diagnostic Theme'}
+              className="
+                p-2
+                rounded-xl
+                border border-border
+                text-muted
+                hover:text-slate
+                hover:bg-soft
+                transition-all
+                cursor-pointer
+                flex items-center
+                gap-1.5
+                text-xs
+                font-semibold
+              "
+              title={
+                theme === 'dark'
+                  ? 'Switch to Light Clinical Theme'
+                  : 'Switch to Dark Diagnostic Theme'
+              }
               aria-label="Toggle Theme"
             >
               {theme === 'dark' ? (
                 <>
                   <Sun className="w-4 h-4 text-amber-400" />
-                  <span className="hidden md:inline">Light</span>
+                  <span className="hidden lg:inline">
+                    Light
+                  </span>
                 </>
               ) : (
                 <>
                   <Moon className="w-4 h-4 text-slate" />
-                  <span className="hidden md:inline">Dark</span>
+                  <span className="hidden lg:inline">
+                    Dark
+                  </span>
                 </>
               )}
             </button>
 
-            <div className="h-6 w-[1px] bg-border mx-1 hidden sm:block"></div>
+            {/* Divider */}
+            <div
+              className="
+                h-6
+                w-[1px]
+                bg-border
+                mx-1
+                hidden sm:block
+              "
+            />
 
+            {/* Doctor Info */}
             <div className="text-right hidden sm:block">
-              <div className="text-sm font-bold text-navy">Dr. Ananya Rao</div>
-              <div className="text-xs text-muted">Neurology &middot; DR-0148</div>
+              <div className="text-sm font-bold text-navy">
+                Dr. Ananya Rao
+              </div>
+
+              <div className="text-xs text-muted">
+                Neurology &middot; DR-0148
+              </div>
             </div>
-            <div 
-              onClick={() => router.push('/dashboard/doctor')}
-              className="w-10 h-10 rounded-full bg-green-bg text-primary font-bold flex items-center justify-center border border-border cursor-pointer hover:opacity-90 transition-opacity"
+
+            {/* Doctor Avatar */}
+            <div
+              onClick={() => navigate('/dashboard/doctor')}
+              className="
+                w-10 h-10
+                rounded-full
+                bg-green-bg
+                text-primary
+                font-bold
+                flex items-center
+                justify-center
+                border border-border
+                cursor-pointer
+                hover:opacity-90
+                transition-opacity
+                shrink-0
+              "
               title="View Doctor Profile"
             >
               AR
@@ -141,7 +460,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        {/* Page Content */}
+        {/* =====================================================
+            PAGE CONTENT
+        ====================================================== */}
         <div className="flex-1 overflow-y-auto">
           {children}
         </div>

@@ -134,10 +134,18 @@ export default function HistoryPage() {
                 </tr>
               ) : (
                 filtered.map((item) => {
-                  const isCompleted = item.status === 'Completed';
-                  const finding = item.assessmentType.includes("Parkinson")
-                    ? `${item.parkinsonClass || 'Evaluated'} (${item.parkinsonConfidence || 85}%)`
-                    : `${item.alzheimerClass || 'Evaluated'} (${item.alzheimerConfidence || 90}%)`;
+                  const isCompleted = item.status === 'AI Analysis Completed';
+const finding = item.assessmentType.includes("Parkinson")
+  ? `${item.parkinsonClass || 'Evaluated'}${
+      item.parkinsonConfidence !== undefined && item.parkinsonConfidence !== null
+        ? ` (${item.parkinsonConfidence.toFixed(1)}%)`
+        : ''
+    }`
+  : `${item.alzheimerClass || 'Evaluated'}${
+      item.alzheimerConfidence !== undefined && item.alzheimerConfidence !== null
+        ? ` (${item.alzheimerConfidence.toFixed(1)}%)`
+        : ''
+    }`;
 
                   return (
                     <tr key={item.id} className="hover:bg-[#F4F8F5] transition-colors">

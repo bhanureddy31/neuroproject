@@ -240,10 +240,14 @@ export const db = {
       a.assessmentType,
       a.mriImage || null,
       a.alzheimerClass || null,
-      a.alzheimerConfidence || null,
+      a.alzheimerConfidence !== undefined && a.alzheimerConfidence !== null
+  ? a.alzheimerConfidence
+  : null,
       a.alzheimerProbs || null,
       a.parkinsonClass || null,
-      a.parkinsonConfidence || null,
+       a.parkinsonConfidence !== undefined && a.parkinsonConfidence !== null
+  ? a.parkinsonConfidence
+  : null,
       a.parkinsonProbs || null,
       a.gradcamHeatmap || null,
       a.clinicalNotes || null,

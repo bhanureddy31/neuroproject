@@ -41,11 +41,32 @@ yarn-error.log*
 next-env.d.ts
 
 # python
+
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.venv/
 env/
 venv/
 ENV/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python inference backups and logs
+*.backup
+*.mode-backup
+alzheimer_output.txt
+
+# Generated model and inference artifacts
+__pycache__/
+*.py[cod]
+
+# Local environment files
+.env
+.env.*
+!.env.example

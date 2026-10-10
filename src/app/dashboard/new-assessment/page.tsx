@@ -32,9 +32,12 @@ function NewAssessmentContent() {
     medicalHistory: ''
   });
 
-  const [mriFile, setMriFile] = useState<File | null>(null);
-  const [mriPreview, setMriPreview] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+const [mriFile, setMriFile] = useState<File | null>(null);
+const [mriPreview, setMriPreview] = useState<string | null>(null);
+const [analysisMode, setAnalysisMode] = useState<
+  'alzheimer' | 'parkinson' | 'dual'
+>('dual');
+const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<any>(null);
   const [reportScope, setReportScope] = useState<'both' | 'alzheimer' | 'parkinson'>('both');
   const [viewMode, setViewMode] = useState<'official' | 'modern'>('official');
@@ -82,6 +85,12 @@ function NewAssessmentContent() {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setMriFile(file);
+
+      if (file.name.toLowerCase().endsWith('.nii') || file.name.toLowerCase().endsWith('.nii.gz')) {
+        setMriPreview('');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setMriPreview(reader.result as string);
@@ -96,9 +105,16 @@ function NewAssessmentContent() {
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       setMriFile(file);
+
+      if (file.name.toLowerCase().endsWith('.nii') || file.name.toLowerCase().endsWith('.nii.gz')) {
+        setMriPreview('');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setMriPreview(reader.result as string);
@@ -109,68 +125,198 @@ function NewAssessmentContent() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  const runAnalysis = async () => {
-    setCurrentStep(3);
-    setIsAnalyzing(true);
-    
-    try {
-      const res = await fetch('/api/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mriImage: mriPreview,
-          patientData,
-        }),
-      });
-      const data = await res.json();
+const runAnalysis = async () => {
+  setCurrentStep(3);
+  setIsAnalyzing(true);
 
-      if (data.success) {
-        const alzProbsArray = ALZHEIMER_CLASSES.map((c) => (data.alzheimer.probabilities[c] || 0) / 100);
-        const parkProbsArray = PARKINSON_CLASSES.map((c) => (data.parkinson.probabilities[c] || 0) / 100);
-
-        setAnalysisResults({
-          alzheimer: {
-            class: data.alzheimer.prediction,
-            confidence: data.alzheimer.confidence,
-            probs: alzProbsArray,
-            probabilities: data.alzheimer.probabilities,
-          },
-          parkinson: {
-            class: data.parkinson.prediction,
-            confidence: data.parkinson.confidence,
-            probs: parkProbsArray,
-            probabilities: data.parkinson.probabilities,
-          },
-          explainability: data.explainability,
-        });
-      } else {
-        throw new Error(data.error || 'Prediction failed');
-      }
-    } catch (err) {
-      console.error('Inference API error, utilizing calibrated local standard:', err);
-      const age = parseInt(patientData.age) || 50;
-      let alz_probs = age > 65 ? [0.15, 0.45, 0.30, 0.10] : [0.70, 0.20, 0.07, 0.03];
-      let park_probs = age > 60 ? [0.35, 0.65] : [0.82, 0.18];
-      const alz_max_idx = alz_probs.indexOf(Math.max(...alz_probs));
-      const park_max_idx = park_probs.indexOf(Math.max(...park_probs));
-
-      setAnalysisResults({
-        alzheimer: {
-          class: ALZHEIMER_CLASSES[alz_max_idx],
-          confidence: (alz_probs[alz_max_idx] * 100).toFixed(1),
-          probs: alz_probs,
-        },
-        parkinson: {
-          class: PARKINSON_CLASSES[park_max_idx],
-          confidence: (park_probs[park_max_idx] * 100).toFixed(1),
-          probs: park_probs,
-        },
-      });
-    } finally {
-      setIsAnalyzing(false);
+  try {
+    if (!mriFile) {
+      throw new Error('Please upload an MRI file before starting the analysis.');
     }
-  };
 
+    // ---------------------------------------------------------
+    // MRI FILE VALIDATION
+    // ---------------------------------------------------------
+    // Parkinson pipeline:
+    //   .nii / .nii.gz
+    //
+    // Alzheimer pipeline:
+    //   .jpg / .jpeg / .png
+    //
+    // The backend currently determines the appropriate pipeline
+    // based on the uploaded MRI format.
+    // ---------------------------------------------------------
+   const fileName = mriFile.name.toLowerCase();
+
+const isNifti =
+  fileName.endsWith('.nii') ||
+  fileName.endsWith('.nii.gz');
+
+const isSupportedImage =
+  fileName.endsWith('.jpg') ||
+  fileName.endsWith('.jpeg') ||
+  fileName.endsWith('.png');
+
+// ---------------------------------------------------------
+// VALIDATE MRI FORMAT BASED ON SELECTED ANALYSIS MODE
+// ---------------------------------------------------------
+
+if (analysisMode === 'alzheimer' && !isSupportedImage) {
+  throw new Error(
+    "Alzheimer's analysis requires an MRI image in JPG, JPEG, or PNG format."
+  );
+}
+
+if (
+  (analysisMode === 'parkinson' || analysisMode === 'dual') &&
+  !isNifti
+) {
+  throw new Error(
+    analysisMode === 'dual'
+      ? 'Dual Assessment requires one 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz).'
+      : "Parkinson's analysis requires a 3D T1-weighted MRI in NIfTI format (.nii/.nii.gz)."
+  );
+}
+
+    // ---------------------------------------------------------
+    // CREATE FORM DATA
+    // ---------------------------------------------------------
+   const formData = new FormData();
+
+formData.append('mriFile', mriFile);
+formData.append(
+  'patientData',
+  JSON.stringify(patientData)
+);
+formData.append('mode', analysisMode);
+
+    // ---------------------------------------------------------
+    // CALL AI BACKEND
+    // ---------------------------------------------------------
+    const res = await fetch('/api/predict', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(
+        data.error || 'MRI prediction failed.'
+      );
+    }
+
+    if (!data.alzheimer && !data.parkinson) {
+      throw new Error(
+        'The AI backend returned no analysis result for this MRI file.'
+      );
+    }
+
+    // ---------------------------------------------------------
+    // ALZHEIMER RESULT
+    // ---------------------------------------------------------
+    let alzheimerResult = null;
+
+    if (data.alzheimer) {
+      const probabilities =
+        data.alzheimer.probabilities || {};
+
+      const predictedClass =
+        data.alzheimer.prediction;
+
+      const predictedConfidence =
+        Number(probabilities[predictedClass] || 0) * 100;
+
+      alzheimerResult = {
+        class: predictedClass,
+        confidence: predictedConfidence,
+
+        probs: [
+          Number(probabilities.NonDemented || 0),
+          Number(probabilities.VeryMildDemented || 0),
+          Number(probabilities.MildDemented || 0),
+          Number(probabilities.ModerateDemented || 0),
+        ],
+
+        probabilities,
+      };
+    }
+
+    // ---------------------------------------------------------
+    // PARKINSON RESULT
+    // ---------------------------------------------------------
+    let parkinsonResult = null;
+
+    if (data.parkinson) {
+      const probabilities =
+        data.parkinson.probabilities || {};
+
+      const predictedClass =
+        data.parkinson.prediction;
+
+      const predictedConfidence =
+        Number(probabilities[predictedClass] || 0) * 100;
+
+      parkinsonResult = {
+        class:
+          predictedClass === 'CO'
+            ? 'Healthy Control'
+            : predictedClass === 'PD'
+              ? "Parkinson's Disease"
+              : predictedClass,
+
+        confidence: predictedConfidence,
+
+        probs: [
+          Number(probabilities.CO || 0),
+          Number(probabilities.PD || 0),
+        ],
+
+        probabilities,
+      };
+    }
+
+    // ---------------------------------------------------------
+    // SAVE ANALYSIS RESULTS
+    // ---------------------------------------------------------
+    setAnalysisResults({
+      alzheimer: alzheimerResult,
+      parkinson: parkinsonResult,
+      explainability:
+        data.parkinson?.explainability ||
+        data.alzheimer?.explainability ||
+        null,
+    });
+
+    // ---------------------------------------------------------
+    // SET REPORT SCOPE
+    // ---------------------------------------------------------
+    if (parkinsonResult && !alzheimerResult) {
+      setReportScope('parkinson');
+    } else if (alzheimerResult && !parkinsonResult) {
+      setReportScope('alzheimer');
+    } else {
+      setReportScope('both');
+    }
+
+  } catch (err) {
+    console.error('Inference API error:', err);
+
+    const message =
+      err instanceof Error
+        ? err.message
+        : 'MRI analysis failed. Please try again.';
+
+    setAnalysisResults(null);
+
+    alert(
+      `MRI analysis failed:\n\n${message}`
+    );
+
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
   const handleNext = () => {
     if (currentStep === 2) {
       runAnalysis();
@@ -193,16 +339,16 @@ function NewAssessmentContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: patientData.id,
-          name: patientData.name || 'Unnamed Patient',
-          age: patientData.age || 60,
-          gender: patientData.gender,
-          bloodPressure: patientData.bp,
-          bloodSugar: patientData.bloodSugar,
-          memoryInfo: patientData.memoryInfo,
-          movementInfo: patientData.movementInfo,
-          medicalHistory: patientData.medicalHistory,
-        }),
+  id: patientData.id,
+  name: patientData.name,
+  age: patientData.age ? Number(patientData.age) : undefined,
+  gender: patientData.gender || '',
+  bloodPressure: patientData.bp || '',
+  bloodSugar: patientData.bloodSugar || '',
+  memoryInfo: patientData.memoryInfo || '',
+  movementInfo: patientData.movementInfo || '',
+  medicalHistory: patientData.medicalHistory || '',
+}),
       });
 
       // 2. Save Assessment record in SQLite database
@@ -211,21 +357,50 @@ function NewAssessmentContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: assessmentId,
-          patientId: patientData.id,
-          assessmentType: "Dual Assessment (Alzheimer's & Parkinson's)",
-          mriImage: mriPreview,
-          alzheimerClass: analysisResults?.alzheimer?.class || 'Non Demented',
-          alzheimerConfidence: analysisResults?.alzheimer?.confidence || 91.4,
-          alzheimerProbs: analysisResults?.alzheimer?.probabilities || {},
-          parkinsonClass: analysisResults?.parkinson?.class || 'Healthy Control',
-          parkinsonConfidence: analysisResults?.parkinson?.confidence || 86.8,
-          parkinsonProbs: analysisResults?.parkinson?.probabilities || {},
-          gradcamHeatmap: analysisResults?.explainability?.heatmapUrl || null,
-          clinicalNotes: `Cognitive: ${patientData.memoryInfo || 'None reported'}. Motor: ${patientData.movementInfo || 'None reported'}. Medical History: ${patientData.medicalHistory || 'None reported'}`,
-          doctorReview: 'Dr. Ananya Rao (DR-0148) — Verified',
-          status: 'Completed',
-        }),
+  id: assessmentId,
+
+  patientId: patientData.id,
+
+  assessmentType:
+    analysisResults?.alzheimer && analysisResults?.parkinson
+      ? "Dual Assessment (Alzheimer's & Parkinson's)"
+      : analysisResults?.parkinson
+        ? "Parkinson's MRI Assessment"
+        : "Alzheimer's MRI Assessment",
+
+  mriImage:
+  analysisResults?.explainability?.display_slice ||
+  mriPreview ||
+  null,
+
+  ...(analysisResults?.alzheimer
+    ? {
+        alzheimerClass: analysisResults.alzheimer.class,
+        alzheimerConfidence: analysisResults.alzheimer.confidence,
+        alzheimerProbs: analysisResults.alzheimer.probabilities,
+      }
+    : {}),
+
+  ...(analysisResults?.parkinson
+    ? {
+        parkinsonClass: analysisResults.parkinson.class,
+        parkinsonConfidence: analysisResults.parkinson.confidence,
+        parkinsonProbs: analysisResults.parkinson.probabilities,
+      }
+    : {}),
+
+  gradcamHeatmap:
+    analysisResults?.explainability?.heatmapUrl || null,
+
+  clinicalNotes:
+    `Cognitive: ${patientData.memoryInfo || 'None reported'}. ` +
+    `Motor: ${patientData.movementInfo || 'None reported'}. ` +
+    `Medical History: ${patientData.medicalHistory || 'None reported'}`,
+
+  doctorReview: 'Pending clinical review',
+
+  status: 'AI Analysis Completed',
+}),
       });
 
       // Redirect immediately to full clinical hospital report
@@ -281,14 +456,24 @@ function NewAssessmentContent() {
       }
 
       const patientName = patientData.name ? patientData.name.replace(/\s+/g, '_') : patientData.id;
-      const scopeLabel =
-        scope === 'both'
-          ? 'Dual_Assessment'
-          : scope === 'alzheimer'
-          ? 'Alzheimers_Diagnostic'
-          : 'Parkinsons_Diagnostic';
+      const hasAlzheimer = !!analysisResults?.alzheimer;
+const hasParkinson = !!analysisResults?.parkinson;
 
-      pdf.save(`Official_Medical_Report_${scopeLabel}_${patientName}_${patientData.id}.pdf`);
+let scopeLabel: string;
+
+if (hasAlzheimer && hasParkinson) {
+  scopeLabel = 'Dual_Assessment';
+} else if (hasAlzheimer) {
+  scopeLabel = 'Alzheimers_Diagnostic';
+} else if (hasParkinson) {
+  scopeLabel = 'Parkinsons_Diagnostic';
+} else {
+  scopeLabel = 'MRI_Assessment';
+}
+
+pdf.save(
+  `Official_Medical_Report_${scopeLabel}_${patientName}_${patientData.id}.pdf`
+);
       setShowDownloadModal(false);
     } catch (error) {
       console.error('Failed to generate PDF canvas, falling back to print dialog:', error);
@@ -302,36 +487,64 @@ function NewAssessmentContent() {
   const steps = [
     'Patient Info', 'MRI Upload', 'AI Analysis', 'Explainable AI', 'Report'
   ];
-
   const currentAssessmentReport = {
-    id: `NA-${patientData.id || 'NEW'}`,
-    patientId: patientData.id || 'PT-PENDING',
-    assessmentType: "Dual Assessment (Alzheimer's & Parkinson's)",
-    mriImage: mriPreview,
-    alzheimerClass: analysisResults?.alzheimer?.class || 'Non Demented',
-    alzheimerConfidence: analysisResults?.alzheimer?.confidence || 91.4,
-    alzheimerProbs: analysisResults?.alzheimer?.probabilities || {},
-    parkinsonClass: analysisResults?.parkinson?.class || 'Healthy Control',
-    parkinsonConfidence: analysisResults?.parkinson?.confidence || 86.8,
-    parkinsonProbs: analysisResults?.parkinson?.probabilities || {},
-    gradcamHeatmap: analysisResults?.explainability?.heatmapUrl || null,
-    clinicalNotes: `Cognitive: ${patientData.memoryInfo || 'None reported'}. Motor: ${patientData.movementInfo || 'None reported'}. Medical History: ${patientData.medicalHistory || 'None reported'}`,
-    doctorReview: 'Dr. Ananya Rao (DR-0148) — Verified',
-    status: 'Completed',
-    createdAt: new Date().toISOString(),
-    patient: {
-      id: patientData.id,
-      name: patientData.name || 'Unnamed Patient',
-      age: Number(patientData.age) || 60,
-      gender: patientData.gender,
-      bloodPressure: patientData.bp || '120/80 mmHg',
-      bloodSugar: patientData.bloodSugar || '98 mg/dL',
-      memoryInfo: patientData.memoryInfo,
-      movementInfo: patientData.movementInfo,
-      medicalHistory: patientData.medicalHistory,
-    }
-  };
+  id: `NA-${patientData.id || 'NEW'}`,
+  patientId: patientData.id || 'PT-PENDING',
 
+  assessmentType:
+    analysisResults?.alzheimer && analysisResults?.parkinson
+      ? "Dual Assessment (Alzheimer's & Parkinson's)"
+      : analysisResults?.parkinson
+        ? "Parkinson's MRI Assessment"
+        : "Alzheimer's MRI Assessment",
+
+  mriImage:
+    analysisResults?.explainability?.display_slice ||
+    mriPreview ||
+    null,
+
+  ...(analysisResults?.alzheimer
+    ? {
+        alzheimerClass: analysisResults.alzheimer.class,
+        alzheimerConfidence: analysisResults.alzheimer.confidence,
+        alzheimerProbs: analysisResults.alzheimer.probabilities,
+      }
+    : {}),
+
+  ...(analysisResults?.parkinson
+    ? {
+        parkinsonClass: analysisResults.parkinson.class,
+        parkinsonConfidence: analysisResults.parkinson.confidence,
+        parkinsonProbs: analysisResults.parkinson.probabilities,
+      }
+    : {}),
+
+  gradcamHeatmap:
+    analysisResults?.explainability?.heatmapUrl || null,
+
+  clinicalNotes:
+    `Cognitive: ${patientData.memoryInfo || 'None reported'}. ` +
+    `Motor: ${patientData.movementInfo || 'None reported'}. ` +
+    `Medical History: ${patientData.medicalHistory || 'None reported'}`,
+
+  doctorReview: 'Pending clinical review',
+
+  status: 'AI Analysis Completed',
+
+  createdAt: new Date().toISOString(),
+
+  patient: {
+    id: patientData.id,
+    name: patientData.name || '',
+    age: patientData.age ? Number(patientData.age) : undefined,
+    gender: patientData.gender || '',
+    bloodPressure: patientData.bp || '',
+    bloodSugar: patientData.bloodSugar || '',
+    memoryInfo: patientData.memoryInfo || '',
+    movementInfo: patientData.movementInfo || '',
+    medicalHistory: patientData.medicalHistory || '',
+  },
+};
   return (
     <div className="min-h-screen bg-[#F4F8F5] p-6 lg:p-10 font-sans text-[#24333B]">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -491,7 +704,91 @@ function NewAssessmentContent() {
               <h2 className="text-xl font-bold text-[#24333B] mb-6 flex items-center">
                 <FileImage className="w-6 h-6 mr-2 text-[#3D8062]" /> Upload Axial T1-Weighted Brain MRI
               </h2>
-              
+              {/* Analysis Type Selection */}
+<div className="mb-6">
+  <div className="mb-3">
+    <h3 className="text-sm font-semibold text-[#24333B]">
+      Analysis Type
+    </h3>
+    <p className="mt-1 text-xs text-[#78858A]">
+      Select the diagnostic analysis you want to perform.
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+    {/* Alzheimer's */}
+    <button
+      type="button"
+      onClick={() => setAnalysisMode('alzheimer')}
+      className={`rounded-xl border p-4 text-left transition-all ${
+        analysisMode === 'alzheimer'
+          ? 'border-[#3D8062] bg-[#EEF4F0] ring-2 ring-[#3D8062]/20'
+          : 'border-[#DDE7E1] bg-white hover:border-[#3D8062]'
+      }`}
+    >
+      <div className="font-bold text-sm text-[#24333B]">
+        Alzheimer&apos;s
+      </div>
+
+      <div className="mt-1 text-xs text-[#78858A]">
+        Alzheimer Experiment 10
+      </div>
+    </button>
+
+    {/* Parkinson's */}
+    <button
+      type="button"
+      onClick={() => setAnalysisMode('parkinson')}
+      className={`rounded-xl border p-4 text-left transition-all ${
+        analysisMode === 'parkinson'
+          ? 'border-[#3D8062] bg-[#EEF4F0] ring-2 ring-[#3D8062]/20'
+          : 'border-[#DDE7E1] bg-white hover:border-[#3D8062]'
+      }`}
+    >
+      <div className="font-bold text-sm text-[#24333B]">
+        Parkinson&apos;s
+      </div>
+
+      <div className="mt-1 text-xs text-[#78858A]">
+        Parkinson Experiment 06
+      </div>
+    </button>
+
+    {/* Dual Assessment */}
+    <button
+      type="button"
+      onClick={() => setAnalysisMode('dual')}
+      className={`rounded-xl border p-4 text-left transition-all ${
+        analysisMode === 'dual'
+          ? 'border-[#3D8062] bg-[#EEF4F0] ring-2 ring-[#3D8062]/20'
+          : 'border-[#DDE7E1] bg-white hover:border-[#3D8062]'
+      }`}
+    >
+      <div className="font-bold text-sm text-[#24333B]">
+        Dual Assessment
+      </div>
+
+      <div className="mt-1 text-xs text-[#78858A]">
+        One MRI → Both Models
+      </div>
+    </button>
+
+  </div>
+
+  {/* Dual information */}
+  {analysisMode === 'dual' && (
+    <div className="mt-3 rounded-xl border border-[#DDE7E1] bg-[#F4F8F5] p-4 text-xs text-[#526168]">
+      <span className="font-semibold text-[#24333B]">
+        Dual Assessment:
+      </span>{' '}
+      Upload one 3D T1-weighted NIfTI MRI
+      <span className="font-semibold"> (.nii / .nii.gz)</span>.
+      The same MRI will be processed through both the Alzheimer
+      Experiment 10 and Parkinson Experiment 06 pipelines.
+    </div>
+  )}
+</div>
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -499,7 +796,7 @@ function NewAssessmentContent() {
               >
                 <input 
                   type="file" 
-                  accept="image/*"
+                  accept="*/*"
                   onChange={handleFileChange}
                   className="absolute inset-0 opacity-0 cursor-pointer"
                 />
@@ -516,7 +813,29 @@ function NewAssessmentContent() {
                       <Upload className="w-8 h-8" />
                     </div>
                     <h3 className="font-bold text-[#24333B] text-lg mb-1">Upload Patient MRI Scan</h3>
-                    <p className="text-sm text-[#78858A] mb-4">Drag and drop axial MRI scan (DICOM converted to PNG/JPG/NIfTI), or click to browse</p>
+                   <p className="text-sm text-[#78858A] mb-4">
+  {analysisMode === 'alzheimer' && (
+    <>
+      Upload an MRI image in JPG, JPEG, or PNG format for
+      Alzheimer Experiment 10.
+    </>
+  )}
+
+  {analysisMode === 'parkinson' && (
+    <>
+      Upload a 3D T1-weighted MRI in NIfTI format
+      (.nii/.nii.gz) for Parkinson Experiment 06.
+    </>
+  )}
+
+  {analysisMode === 'dual' && (
+    <>
+      Upload one 3D T1-weighted MRI in NIfTI format
+      (.nii/.nii.gz). The same MRI will be analyzed by
+      both models.
+    </>
+  )}
+</p>
                     <span className="inline-block bg-[#3D8062] text-white text-xs font-semibold px-4 py-2 rounded-[8px]">
                       Select Brain MRI File
                     </span>
@@ -537,7 +856,16 @@ function NewAssessmentContent() {
               </div>
 
               <div className="mt-6 flex items-center justify-between text-xs text-[#78858A] bg-[#EEF4F0] p-4 rounded-xl">
-                <span>Recommended: T1-weighted axial brain slice (224×224 normalized matrix)</span>
+              <span>
+  {analysisMode === 'alzheimer' &&
+    'Alzheimer: JPG/JPEG/PNG MRI image'}
+
+  {analysisMode === 'parkinson' &&
+    'Parkinson: 3D T1-weighted NIfTI (.nii/.nii.gz)'}
+
+  {analysisMode === 'dual' &&
+    'Dual: One 3D T1-weighted NIfTI (.nii/.nii.gz) → Both Models'}
+</span>
                 <span className="font-mono text-[#3D8062] font-semibold">Trained EfficientNet-B0 Compatible</span>
               </div>
             </div>
@@ -549,9 +877,9 @@ function NewAssessmentContent() {
               {isAnalyzing ? (
                 <div className="text-center space-y-4">
                   <div className="w-16 h-16 border-4 border-[#EEF4F0] border-t-[#3D8062] rounded-full animate-spin mx-auto" />
-                  <h3 className="text-lg font-bold text-[#24333B]">Running Dual AI Diagnostic Models...</h3>
+                  <h3 className="text-lg font-bold text-[#24333B]">Running AI MRI Analysis...</h3>
                   <p className="text-sm text-[#78858A] max-w-md">
-                    Executing trained PyTorch checkpoints (exp10_best_checkpoint.pt & best_exp06_model.pth) on patient MRI scan...
+                    Executing the trained PyTorch model on the uploaded MRI scan.
                   </p>
                 </div>
               ) : analysisResults ? (
@@ -559,48 +887,61 @@ function NewAssessmentContent() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-2">
                     <div>
                       <h2 className="text-xl font-bold text-[#24333B]">AI Assessment Results</h2>
-                      <p className="text-xs text-[#78858A]">Executed directly from trained weights in OneDrive</p>
+                      <p className="text-xs text-[#78858A]">Results generated from the trained PyTorch inference pipeline.</p>
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#EEF4F0] text-[#3D8062] rounded-full text-xs font-semibold self-start sm:self-auto">
-                      <Brain className="w-3.5 h-3.5" /> PyTorch Weights Direct Execution
+                      <Brain className="w-3.5 h-3.5" /> Real Model Inference
                     </span>
                   </div>
+
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    
                     {/* Alzheimer's Card */}
                     <div className="border border-[#DDE7E1] rounded-2xl p-6 bg-white shadow-sm">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-bold text-[#24333B]">Alzheimer's Assessment</h3>
                         <span className="bg-[#EEF4F0] text-[#3D8062] text-xs font-bold px-2 py-0.5 rounded-full">EFFICIENTNET-B0</span>
                       </div>
-                      <div className="mb-6">
-                        <p className="text-sm text-[#78858A] mb-1">Predicted Class</p>
-                        <p className="text-2xl font-bold text-[#3D8062]">{analysisResults.alzheimer.class}</p>
-                      </div>
-                      <div className="mb-6">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-semibold text-[#24333B]">Confidence Score</span>
-                          <span className="text-sm font-bold text-[#3D8062]">{analysisResults.alzheimer.confidence}%</span>
-                        </div>
-                        <div className="w-full h-2 bg-[#EEF4F0] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#3D8062] rounded-full" style={{ width: `${analysisResults.alzheimer.confidence}%` }}></div>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold text-[#78858A] uppercase tracking-wider mb-2">Class Probabilities</p>
-                        {ALZHEIMER_CLASSES.map((cls, idx) => {
-                          const prob = (analysisResults.alzheimer.probs[idx] * 100).toFixed(1);
-                          return (
-                            <div key={cls} className="flex items-center text-sm">
-                              <span className="w-32 truncate text-[#24333B]">{cls}</span>
-                              <div className="flex-1 h-1.5 bg-[#EEF4F0] mx-3 rounded-full overflow-hidden">
-                                <div className="h-full bg-[#4F9473]" style={{ width: `${prob}%` }}></div>
-                              </div>
-                              <span className="w-10 text-right text-[#78858A]">{prob}%</span>
+
+                      {analysisResults.alzheimer ? (
+                        <>
+                          <div className="mb-6">
+                            <p className="text-sm text-[#78858A] mb-1">Predicted Class</p>
+                            <p className="text-2xl font-bold text-[#3D8062]">{analysisResults.alzheimer.class}</p>
+                          </div>
+                          <div className="mb-6">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-semibold text-[#24333B]">Confidence Score</span>
+                              <span className="text-sm font-bold text-[#3D8062]">{analysisResults.alzheimer.confidence}%</span>
                             </div>
-                          )
-                        })}
-                      </div>
+                            <div className="w-full h-2 bg-[#EEF4F0] rounded-full overflow-hidden">
+                              <div className="h-full bg-[#3D8062] rounded-full" style={{ width: `${analysisResults.alzheimer.confidence}%` }} />
+                            </div>
+                          </div>
+                          <div className="space-y-3">
+                            <p className="text-xs font-semibold text-[#78858A] uppercase tracking-wider mb-2">Class Probabilities</p>
+                            {ALZHEIMER_CLASSES.map((cls, idx) => {
+                              const prob = ((analysisResults.alzheimer.probs?.[idx] || 0) * 100).toFixed(1);
+                              return (
+                                <div key={cls} className="flex items-center text-sm">
+                                  <span className="w-32 truncate text-[#24333B]">{cls}</span>
+                                  <div className="flex-1 h-1.5 bg-[#EEF4F0] mx-3 rounded-full overflow-hidden">
+                                    <div className="h-full bg-[#4F9473]" style={{ width: `${prob}%` }} />
+                                  </div>
+                                  <span className="w-10 text-right text-[#78858A]">{prob}%</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="min-h-[220px] flex flex-col items-center justify-center text-center">
+                          <Brain className="w-10 h-10 text-[#DDE7E1] mb-3" />
+                          <p className="font-semibold text-[#24333B]">Alzheimer's analysis not available</p>
+                          <p className="text-xs text-[#78858A] mt-2 max-w-xs">
+                            This uploaded MRI format was processed by the Parkinson's NIfTI pipeline, so no Alzheimer's result was generated.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Parkinson's Card */}
@@ -609,98 +950,315 @@ function NewAssessmentContent() {
                         <h3 className="font-bold text-[#24333B]">Parkinson's Assessment</h3>
                         <span className="bg-[#EEF4F0] text-[#3D8062] text-xs font-bold px-2 py-0.5 rounded-full">EFFICIENTNET-B0</span>
                       </div>
-                      <div className="mb-6">
-                        <p className="text-sm text-[#78858A] mb-1">Predicted Class</p>
-                        <p className="text-2xl font-bold text-[#3D8062]">{analysisResults.parkinson.class}</p>
-                      </div>
-                      <div className="mb-6">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-semibold text-[#24333B]">Confidence Score</span>
-                          <span className="text-sm font-bold text-[#3D8062]">{analysisResults.parkinson.confidence}%</span>
-                        </div>
-                        <div className="w-full h-2 bg-[#EEF4F0] rounded-full overflow-hidden">
-                          <div className="h-full bg-[#3D8062] rounded-full" style={{ width: `${analysisResults.parkinson.confidence}%` }}></div>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold text-[#78858A] uppercase tracking-wider mb-2">Class Probabilities</p>
-                        {PARKINSON_CLASSES.map((cls, idx) => {
-                          const prob = (analysisResults.parkinson.probs[idx] * 100).toFixed(1);
-                          return (
-                            <div key={cls} className="flex items-center text-sm">
-                              <span className="w-32 truncate text-[#24333B]">{cls}</span>
-                              <div className="flex-1 h-1.5 bg-[#EEF4F0] mx-3 rounded-full overflow-hidden">
-                                <div className="h-full bg-[#4F9473]" style={{ width: `${prob}%` }}></div>
-                              </div>
-                              <span className="w-10 text-right text-[#78858A]">{prob}%</span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
 
+                      {analysisResults.parkinson ? (
+                        <>
+                          <div className="mb-6">
+                            <p className="text-sm text-[#78858A] mb-1">Predicted Class</p>
+                            <p className="text-2xl font-bold text-[#3D8062]">{analysisResults.parkinson.class}</p>
+                          </div>
+                          <div className="mb-6">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-semibold text-[#24333B]">Confidence Score</span>
+                              <span className="text-sm font-bold text-[#3D8062]">{analysisResults.parkinson.confidence}%</span>
+                            </div>
+                            <div className="w-full h-2 bg-[#EEF4F0] rounded-full overflow-hidden">
+                              <div className="h-full bg-[#3D8062] rounded-full" style={{ width: `${analysisResults.parkinson.confidence}%` }} />
+                            </div>
+                          </div>
+                          <div className="space-y-3">
+                            <p className="text-xs font-semibold text-[#78858A] uppercase tracking-wider mb-2">Class Probabilities</p>
+                            {PARKINSON_CLASSES.map((cls, idx) => {
+                              const prob = ((analysisResults.parkinson.probs?.[idx] || 0) * 100).toFixed(1);
+                              return (
+                                <div key={cls} className="flex items-center text-sm">
+                                  <span className="w-32 truncate text-[#24333B]">{cls}</span>
+                                  <div className="flex-1 h-1.5 bg-[#EEF4F0] mx-3 rounded-full overflow-hidden">
+                                    <div className="h-full bg-[#4F9473]" style={{ width: `${prob}%` }} />
+                                  </div>
+                                  <span className="w-10 text-right text-[#78858A]">{prob}%</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="min-h-[220px] flex flex-col items-center justify-center text-center">
+                          <Brain className="w-10 h-10 text-[#DDE7E1] mb-3" />
+                          <p className="font-semibold text-[#24333B]">Parkinson's analysis not available</p>
+                          <p className="text-xs text-[#78858A] mt-2 max-w-xs">
+                            This MRI input did not produce a Parkinson's result.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : null}
             </div>
           )}
 
-          {/* STEP 4: GRAD-CAM EXPLAINABILITY */}
-          {currentStep === 4 && (
-            <div className="bg-white rounded-2xl border border-[#DDE7E1] p-8 shadow-[0_8px_24px_rgba(36,51,59,.055)]">
-              <h2 className="text-xl font-bold text-[#24333B] mb-6">Explainable AI (Grad-CAM Saliency)</h2>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                <div>
-                  <h3 className="font-semibold text-[#24333B] mb-3 text-center">Original MRI Slice</h3>
-                  <div className="bg-[#172127] rounded-2xl p-4 flex items-center justify-center min-h-[300px]">
-                    {mriPreview ? (
-                      <img src={mriPreview} alt="Original MRI" className="object-contain max-h-[250px]" />
-                    ) : (
-                      <p className="text-[#78858A]">No Image</p>
-                    )}
-                  </div>
-                </div>
-                
-                <div>
-                  <h3 className="font-semibold text-[#24333B] mb-3 text-center">Grad-CAM Heatmap Overlay</h3>
-                  <div className="bg-[#172127] rounded-2xl p-4 flex items-center justify-center min-h-[300px] relative overflow-hidden">
-                    {analysisResults?.explainability?.heatmapUrl ? (
-                      <img src={analysisResults.explainability.heatmapUrl} alt="Grad-CAM Heatmap" className="object-contain max-h-[250px]" />
-                    ) : mriPreview ? (
-                      <div className="relative inline-block">
-                        <img src={mriPreview} alt="MRI Base" className="object-contain max-h-[250px]" />
-                        <div 
-                          className="absolute inset-0 z-10" 
-                          style={{
-                            background: 'radial-gradient(circle at 45% 40%, rgba(255,0,0,0.6) 0%, rgba(255,165,0,0.4) 25%, rgba(0,128,0,0.2) 50%, transparent 70%)',
-                            mixBlendMode: 'screen'
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <p className="text-[#78858A]">No Image</p>
-                    )}
-                  </div>
-                </div>
-              </div>
+       {/* STEP 4: GRAD-CAM EXPLAINABILITY */}
+{currentStep === 4 && (
+  <div className="bg-white rounded-2xl border border-[#DDE7E1] p-8 shadow-[0_8px_24px_rgba(36,51,59,.055)]">
 
-              <div className="bg-[#FFF7E6] border border-[#F5DEB3] rounded-xl p-6">
-                <div className="flex items-start">
-                  <AlertCircle className="w-6 h-6 text-[#B8860B] mr-4 flex-shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-bold text-[#8B6508] mb-2">Interpretability Analysis</h4>
-                    <p className="text-sm text-[#8B6508] mb-4">
-                      The Grad-CAM heatmap highlights regions of the MRI scan that the EfficientNet-B0 model focused on during classification. Warm areas (red/yellow) indicate elevated neural attention over temporal cortex and midbrain structures.
-                    </p>
-                    <p className="text-xs font-semibold text-[#8B6508] uppercase opacity-75">
-                      Disclaimer: This visualization is generated by research AI models and should be interpreted by a qualified neurologist.
-                    </p>
-                  </div>
-                </div>
-              </div>
+    <h2 className="text-xl font-bold text-[#24333B] mb-6">
+      Explainable AI (Grad-CAM Saliency)
+    </h2>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+
+      {/* ORIGINAL / SOURCE MRI */}
+      <div>
+        <h3 className="font-semibold text-[#24333B] mb-3 text-center">
+          MRI Slice Used for Analysis
+        </h3>
+
+        <div className="bg-[#172127] rounded-2xl p-4 flex items-center justify-center min-h-[300px]">
+
+          {analysisResults?.explainability?.display_slice ? (
+            <div className="text-center">
+
+              <img
+                src={analysisResults.explainability.display_slice}
+                alt="MRI slice used for Grad-CAM"
+                className="object-contain w-full max-w-[360px] aspect-square rounded-lg"
+              />
+
+              <p className="text-xs text-[#AAB5BA] mt-3">
+                Central MRI slice · 0 mm offset
+              </p>
+
+            </div>
+          ) : mriPreview ? (
+            <div className="text-center">
+
+              <img
+                src={mriPreview}
+                alt="Uploaded MRI"
+                className="object-contain max-h-[250px] rounded-lg"
+              />
+
+              <p className="text-xs text-[#AAB5BA] mt-3">
+                Uploaded MRI image
+              </p>
+
+            </div>
+          ) : (
+            <div className="text-center">
+
+              <FileImage className="w-8 h-8 text-[#78858A] mx-auto mb-2" />
+
+              <p className="text-[#78858A] text-sm">
+                MRI visualization is not available.
+              </p>
+
+              <p className="text-[#78858A] text-xs mt-1">
+                The uploaded NIfTI file is processed by the backend.
+              </p>
+
             </div>
           )}
+
+        </div>
+      </div>
+
+
+      {/* REAL GRAD-CAM VISUALIZATION */}
+      <div>
+
+        <h3 className="font-semibold text-[#24333B] mb-3 text-center">
+          Real Grad-CAM Overlay
+        </h3>
+
+        <div className="bg-[#172127] rounded-2xl p-4 flex items-center justify-center min-h-[300px]">
+
+          {analysisResults?.explainability?.heatmapUrl ? (
+
+            <div className="w-full max-w-[360px]">
+
+              {/* REAL BACKEND-GENERATED GRAD-CAM */}
+              <div className="relative aspect-square overflow-hidden rounded-lg bg-black">
+
+                <img
+                  src={analysisResults.explainability.heatmapUrl}
+                  alt="Real Grad-CAM visualization"
+                  className="w-full h-full object-contain"
+                />
+
+              </div>
+
+
+              {/* GRAD-CAM SCALE */}
+              <div className="mt-4">
+
+                <div className="h-2 rounded-full bg-gradient-to-r from-blue-600 via-yellow-400 to-red-600" />
+
+                <div className="flex justify-between text-[10px] text-[#AAB5BA] mt-1">
+                  <span>Low activation</span>
+                  <span>High activation</span>
+                </div>
+
+              </div>
+
+
+              {/* VISUALIZATION LABEL */}
+              <div className="flex justify-between items-center mt-3 text-xs text-[#AAB5BA]">
+
+                <span>
+                  {analysisResults.explainability.method || "Grad-CAM"}
+                </span>
+
+                <span>
+                  Real model output
+                </span>
+
+              </div>
+
+            </div>
+
+          ) : analysisResults?.explainability?.results?.length > 0 ? (
+
+            /*
+             * Parkinson's compatibility:
+             * The Parkinson pipeline can provide its own CAM matrix.
+             * This branch is retained for that real backend output.
+             */
+            <div className="w-full max-w-[360px]">
+
+              {analysisResults.explainability.display_slice && (
+                <div className="relative aspect-square overflow-hidden rounded-lg bg-black">
+
+                  <img
+                    src={analysisResults.explainability.display_slice}
+                    alt="MRI slice used for Grad-CAM"
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
+
+                </div>
+              )}
+
+              <div className="mt-4">
+
+                <p className="text-xs text-[#AAB5BA] text-center">
+                  Real Grad-CAM data was generated by the backend.
+                </p>
+
+              </div>
+
+            </div>
+
+          ) : (
+
+            <div className="text-center">
+
+              <AlertCircle className="w-8 h-8 text-[#78858A] mx-auto mb-2" />
+
+              <p className="text-[#78858A] text-sm">
+                Real Grad-CAM visualization is not available for this result.
+              </p>
+
+              <p className="text-[#78858A] text-xs mt-2">
+                No Grad-CAM image was returned by the AI inference pipeline.
+              </p>
+
+            </div>
+
+          )}
+
+        </div>
+      </div>
+
+    </div>
+
+
+    {/* GRAD-CAM TECHNICAL DETAILS */}
+    {analysisResults?.explainability && (
+      <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+
+        {/* METHOD */}
+        <div className="bg-[#F4F8F5] border border-[#DDE7E1] rounded-xl p-4">
+
+          <p className="text-xs text-[#78858A] uppercase font-semibold mb-1">
+            Method
+          </p>
+
+          <p className="font-bold text-[#24333B]">
+            {analysisResults.explainability.method || "Grad-CAM"}
+          </p>
+
+        </div>
+
+
+        {/* TARGET LAYER */}
+        <div className="bg-[#F4F8F5] border border-[#DDE7E1] rounded-xl p-4">
+
+          <p className="text-xs text-[#78858A] uppercase font-semibold mb-1">
+            Target Layer
+          </p>
+
+          <p className="font-bold text-[#24333B] text-sm font-mono break-all">
+            {analysisResults.explainability.target_layer || "Not specified"}
+          </p>
+
+        </div>
+
+
+        {/* TARGET CLASS */}
+        <div className="bg-[#F4F8F5] border border-[#DDE7E1] rounded-xl p-4">
+
+          <p className="text-xs text-[#78858A] uppercase font-semibold mb-1">
+            Target Class
+          </p>
+
+          <p className="font-bold text-[#24333B]">
+            {analysisResults.explainability.target_class !== undefined
+              ? (
+                  analysisResults.alzheimer?.class ||
+                  analysisResults.parkinson?.class ||
+                  `Class ${analysisResults.explainability.target_class}`
+                )
+              : "Not specified"}
+          </p>
+
+        </div>
+
+      </div>
+    )}
+
+
+    {/* INTERPRETABILITY NOTICE */}
+    <div className="bg-[#FFF7E6] border border-[#F5DEB3] rounded-xl p-6">
+
+      <div className="flex items-start">
+
+        <AlertCircle className="w-6 h-6 text-[#B8860B] mr-4 flex-shrink-0 mt-1" />
+
+        <div>
+
+          <h4 className="font-bold text-[#8B6508] mb-2">
+            Interpretability Analysis
+          </h4>
+
+          <p className="text-sm text-[#8B6508] mb-4">
+            The Grad-CAM visualization is generated directly from the trained
+            AI model during inference. It provides a visual representation
+            of the image regions associated with the model's prediction.
+          </p>
+
+          <p className="text-xs font-semibold text-[#8B6508] uppercase opacity-75">
+            Disclaimer: This visualization is generated by a research AI
+            model and is not a clinically validated diagnostic measurement.
+          </p>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+)}
 
           {/* STEP 5: CLINICAL REPORT PREVIEW & 3-WAY DOWNLOAD */}
           {currentStep === 5 && (
@@ -714,31 +1272,40 @@ function NewAssessmentContent() {
 
                 <div className="inline-flex p-1 bg-[#EEF4F0] rounded-xl border border-[#DDE7E1] text-xs font-bold self-start sm:self-auto">
                   <button
-                    onClick={() => setReportScope('both')}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                    onClick={() => analysisResults?.alzheimer && analysisResults?.parkinson && setReportScope('both')}
+                    disabled={!analysisResults?.alzheimer || !analysisResults?.parkinson}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
                       reportScope === 'both'
                         ? 'bg-[#3D8062] text-white shadow-xs'
-                        : 'text-[#78858A] hover:text-[#24333B]'
+                        : analysisResults?.alzheimer && analysisResults?.parkinson
+                        ? 'text-[#78858A] hover:text-[#24333B] cursor-pointer'
+                        : 'text-[#D0D8D3] cursor-not-allowed'
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5" /> Both (Dual)
                   </button>
                   <button
-                    onClick={() => setReportScope('alzheimer')}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                    onClick={() => analysisResults?.alzheimer && setReportScope('alzheimer')}
+                    disabled={!analysisResults?.alzheimer}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
                       reportScope === 'alzheimer'
                         ? 'bg-[#3D8062] text-white shadow-xs'
-                        : 'text-[#78858A] hover:text-[#24333B]'
+                        : analysisResults?.alzheimer
+                        ? 'text-[#78858A] hover:text-[#24333B] cursor-pointer'
+                        : 'text-[#D0D8D3] cursor-not-allowed'
                     }`}
                   >
                     <Brain className="w-3.5 h-3.5" /> Alzheimer's
                   </button>
                   <button
-                    onClick={() => setReportScope('parkinson')}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                    onClick={() => analysisResults?.parkinson && setReportScope('parkinson')}
+                    disabled={!analysisResults?.parkinson}
+                    className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
                       reportScope === 'parkinson'
                         ? 'bg-[#3D8062] text-white shadow-xs'
-                        : 'text-[#78858A] hover:text-[#24333B]'
+                        : analysisResults?.parkinson
+                        ? 'text-[#78858A] hover:text-[#24333B] cursor-pointer'
+                        : 'text-[#D0D8D3] cursor-not-allowed'
                     }`}
                   >
                     <Zap className="w-3.5 h-3.5" /> Parkinson's
@@ -770,7 +1337,7 @@ function NewAssessmentContent() {
                     <div className="space-y-3.5">
                       {/* Option 1: Alzheimer's */}
                       <div 
-                        onClick={() => executeDownloadPDF('alzheimer')}
+                        onClick={() => analysisResults?.alzheimer && executeDownloadPDF('alzheimer')}
                         className="border border-[#DDE7E1] hover:border-[#3D8062] hover:bg-[#F4F8F5] p-4 rounded-xl transition-all cursor-pointer group flex items-start justify-between gap-4"
                       >
                         <div className="flex items-start gap-3">
@@ -796,7 +1363,7 @@ function NewAssessmentContent() {
 
                       {/* Option 2: Parkinson's */}
                       <div 
-                        onClick={() => executeDownloadPDF('parkinson')}
+                        onClick={() => analysisResults?.parkinson && executeDownloadPDF('parkinson')}
                         className="border border-[#DDE7E1] hover:border-[#3D8062] hover:bg-[#F4F8F5] p-4 rounded-xl transition-all cursor-pointer group flex items-start justify-between gap-4"
                       >
                         <div className="flex items-start gap-3">
@@ -822,7 +1389,7 @@ function NewAssessmentContent() {
 
                       {/* Option 3: Both */}
                       <div 
-                        onClick={() => executeDownloadPDF('both')}
+                        onClick={() => analysisResults?.alzheimer && analysisResults?.parkinson && executeDownloadPDF('both')}
                         className="border-2 border-[#3D8062] bg-[#EEF4F0]/40 hover:bg-[#EEF4F0] p-4 rounded-xl transition-all cursor-pointer group flex items-start justify-between gap-4"
                       >
                         <div className="flex items-start gap-3">
@@ -943,7 +1510,7 @@ function NewAssessmentContent() {
                     </div>
                     <div>
                       <p className="text-xs text-[#78858A] font-semibold uppercase mb-1">Name</p>
-                      <p className="font-bold">{patientData.name || 'N/A'}</p>
+                      <p className="font-bold">{patientData.name || 'Not provided'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-[#78858A] font-semibold uppercase mb-1">Age / Gender</p>
@@ -965,18 +1532,18 @@ function NewAssessmentContent() {
                     {(reportScope === 'both' || reportScope === 'alzheimer') && (
                       <div>
                         <h4 className="text-sm font-semibold text-[#78858A]">Memory / Cognitive</h4>
-                        <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.memoryInfo || 'No cognitive complaints noted.'}</p>
+                        <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.memoryInfo || 'Not provided'}</p>
                       </div>
                     )}
                     {(reportScope === 'both' || reportScope === 'parkinson') && (
                       <div>
                         <h4 className="text-sm font-semibold text-[#78858A]">Movement / Motor</h4>
-                        <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.movementInfo || 'No motor symptoms noted.'}</p>
+                        <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.movementInfo || 'Not provided'}</p>
                       </div>
                     )}
                     <div>
                       <h4 className="text-sm font-semibold text-[#78858A]">Medical History</h4>
-                      <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.medicalHistory || 'No prior medical history.'}</p>
+                      <p className="text-sm bg-[#F4F8F5] p-3 rounded-lg border border-[#DDE7E1] min-h-[3rem]">{patientData.medicalHistory || 'Not provided'}</p>
                     </div>
                   </div>
                 </div>
@@ -996,7 +1563,7 @@ function NewAssessmentContent() {
                   
                   {analysisResults && (
                     <div className={`grid gap-6 ${reportScope === 'both' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-                      {(reportScope === 'both' || reportScope === 'alzheimer') && (
+                      {(reportScope === 'both' || reportScope === 'alzheimer') && analysisResults.alzheimer && (
                         <div className="border border-[#DDE7E1] p-5 rounded-xl bg-white">
                           <p className="text-xs text-[#78858A] font-bold uppercase mb-1">Alzheimer's Disease Evaluation</p>
                           <p className="text-xl font-bold text-[#3D8062] mb-1">{analysisResults.alzheimer.class}</p>
@@ -1015,7 +1582,7 @@ function NewAssessmentContent() {
                         </div>
                       )}
 
-                      {(reportScope === 'both' || reportScope === 'parkinson') && (
+                      {(reportScope === 'both' || reportScope === 'parkinson') && analysisResults.parkinson && (
                         <div className="border border-[#DDE7E1] p-5 rounded-xl bg-white">
                           <p className="text-xs text-[#78858A] font-bold uppercase mb-1">Parkinson's Disease Evaluation</p>
                           <p className="text-xl font-bold text-[#3D8062] mb-1">{analysisResults.parkinson.class}</p>
@@ -1054,20 +1621,44 @@ function NewAssessmentContent() {
                           {reportScope === 'alzheimer' ? 'Hippocampal Grad-CAM' : reportScope === 'parkinson' ? 'Midbrain Grad-CAM' : 'Integrated Grad-CAM'}
                         </p>
                         <div className="bg-[#172127] rounded-xl p-2 h-48 flex items-center justify-center overflow-hidden">
-                          {analysisResults?.explainability?.heatmapUrl ? (
-                            <img src={analysisResults.explainability.heatmapUrl} className="object-contain max-h-full" alt="Grad-CAM Map" />
-                          ) : mriPreview ? (
-                            <div className="relative inline-block h-full">
-                              <img src={mriPreview} className="object-contain max-h-full" alt="Base" />
-                              <div className="absolute inset-0 z-10" style={{ background: 'radial-gradient(circle at 45% 40%, rgba(255,0,0,0.6) 0%, rgba(255,165,0,0.4) 25%, rgba(0,128,0,0.2) 50%, transparent 70%)', mixBlendMode: 'screen' }} />
-                            </div>
-                          ) : null}
+                          {analysisResults?.explainability?.results?.length > 0 ? (
+  <div className="w-full max-w-[250px] aspect-square grid grid-cols-7 gap-[2px] bg-black p-1 rounded-lg">
+    {analysisResults.explainability.results[0].cam.flat().map(
+      (value: number, index: number) => {
+        const intensity = Math.max(
+          0,
+          Math.min(255, Math.round(value * 255))
+        );
+
+        return (
+          <div
+            key={index}
+            className="aspect-square"
+            style={{
+              backgroundColor: `rgb(${intensity}, 0, ${
+                255 - intensity
+              })`,
+            }}
+            title={`Activation: ${value.toFixed(3)}`}
+          />
+        );
+      }
+    )}
+  </div>
+) : (
+  <div className="text-center">
+    <AlertCircle className="w-8 h-8 text-[#78858A] mx-auto mb-2" />
+    <p className="text-[#78858A] text-sm">
+      Real Grad-CAM visualization is not available for this result.
+    </p>
+  </div>
+)}
                         </div>
                      </div>
                   </div>
                 </div>
 
-                {/* Physician Signature */}
+                {/* Clinical Review Status */}
                 <div className="border-t border-[#DDE7E1] pt-6 flex justify-between items-end">
                   <div className="max-w-md">
                     <p className="text-[10px] text-[#78858A] uppercase font-semibold leading-tight">
@@ -1075,14 +1666,8 @@ function NewAssessmentContent() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <div className="w-48 border-b-2 border-[#24333B] mb-2 mx-auto"></div>
-                    <p className="font-bold text-[#24333B]">Dr. Ananya Rao</p>
-                    <p className="text-xs text-[#78858A]">
-                      {reportScope === 'alzheimer' && 'Consultant Cognitive Neurologist'}
-                      {reportScope === 'parkinson' && 'Consultant Movement Disorders Neurologist'}
-                      {reportScope === 'both' && 'Consultant Neurologist • Neurodegenerative Disorders'}
-                    </p>
-                    <p className="text-xs text-[#78858A]">Reg: DR-0148</p>
+                    <p className="font-bold text-[#24333B]">Reviewer: Not assigned</p>
+                    <p className="text-xs text-[#78858A]">Status: PENDING CLINICAL REVIEW</p>
                   </div>
                 </div>
 
@@ -1118,9 +1703,9 @@ function NewAssessmentContent() {
             {!isAnalyzing && (
               <button 
                 onClick={handleNext} 
-                disabled={currentStep === 2 && !mriPreview}
+                disabled={(currentStep === 2 && !mriFile) || (currentStep === 5 && !analysisResults)}
                 className={`flex items-center justify-center rounded-[10px] px-8 h-11 font-bold transition-colors cursor-pointer ${
-                  (currentStep === 2 && !mriPreview) ? 'bg-[#DDE7E1] text-[#78858A] cursor-not-allowed' : 'bg-[#3D8062] text-white hover:bg-[#346D54]'
+                  ((currentStep === 2 && !mriFile) || (currentStep === 5 && !analysisResults)) ? 'bg-[#DDE7E1] text-[#78858A] cursor-not-allowed' : 'bg-[#3D8062] text-white hover:bg-[#346D54]'
                 }`}
               >
                 {currentStep === 2 ? 'Run AI Analysis' : currentStep === 5 ? (
