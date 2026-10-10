@@ -149,7 +149,48 @@ if (
     console.log('File size:', fileBuffer.length, 'bytes');
 
     /*
-     * Python inference backend.
+     * If remote PYTHON_INFERENCE_URL is configured (e.g. Hugging Face Spaces / Render / FastAPI),
+     * forward the request over HTTP.
+     */
+    if (process.env.PYTHON_INFERENCE_URL) {
+      console.log('Sending MRI file to remote inference URL:', process.env.PYTHON_INFERENCE_URL);
+      const remoteFormData = new FormData();
+      const blob = new Blob([fileBuffer], { type: mriFile.type || 'application/octet-stream' });
+      remoteFormData.append('mriFile', blob, mriFile.name);
+      remoteFormData.append('mode', mode);
+      if (patientDataRaw) {
+        remoteFormData.append('patientData', String(patientDataRaw));
+      }
+
+      const remoteRes = await fetch(process.env.PYTHON_INFERENCE_URL, {
+        method: 'POST',
+        body: remoteFormData,
+      });
+
+      if (!remoteRes.ok) {
+        const errText = await remoteRes.text();
+        throw new Error(`Remote inference service error (${remoteRes.status}): ${errText}`);
+      }
+
+      const pyOutput = await remoteRes.json();
+      if (!pyOutput.success) {
+        throw new Error(pyOutput.error || 'Remote PyTorch inference failed.');
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode,
+        engine: pyOutput.engine || 'PyTorch Cloud Inference Engine',
+        timestamp: new Date().toISOString(),
+        patientData: patientData ?? null,
+        inputType: pyOutput.input_type,
+        alzheimer: pyOutput.alzheimer,
+        parkinson: pyOutput.parkinson,
+      });
+    }
+
+    /*
+     * Python inference backend (Local / Docker Execution).
      */
     const scriptPath = path.join(
       process.cwd(),
@@ -160,28 +201,29 @@ if (
     /*
      * Prefer the project's local Python virtual environment.
      */
-   const localPython =
-  process.platform === 'win32'
-    ? path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')
-    : path.join(process.cwd(), '.venv', 'bin', 'python');
+    const localPython =
+      process.platform === 'win32'
+        ? path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')
+        : path.join(process.cwd(), '.venv', 'bin', 'python');
 
-const pythonExecutable =
-  process.env.PYTHON_EXECUTABLE ||
-  (fs.existsSync(localPython) ? localPython : 'python');
-    console.log('Running PyTorch inference...');
+    const pythonExecutable =
+      process.env.PYTHON_EXECUTABLE ||
+      (fs.existsSync(localPython) ? localPython : 'python');
+
+    console.log('Running PyTorch inference locally...');
     console.log('Python:', pythonExecutable);
     console.log('Input:', tempFilePath);
 
-  const { stdout, stderr } = await execFileAsync(
-  pythonExecutable,
-  [
-    scriptPath,
-    '--image',
-    tempFilePath,
-    '--mode',
-    mode,
-  ],
-);
+    const { stdout, stderr } = await execFileAsync(
+      pythonExecutable,
+      [
+        scriptPath,
+        '--image',
+        tempFilePath,
+        '--mode',
+        mode,
+      ],
+    );
 
     if (stderr) {
       console.log(

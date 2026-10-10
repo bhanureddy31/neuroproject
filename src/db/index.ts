@@ -43,7 +43,7 @@ function getDb(): DatabaseSync {
   if (dbInstance) return dbInstance;
 
   const dataDir = process.env.DATABASE_DIR || path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dataDir)) {
+  if (!fs.existsSync(/*turbopackIgnore: true*/ dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
