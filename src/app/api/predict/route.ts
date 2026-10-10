@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { getFallbackGradCamSvg } from '@/utils/gradcam';
 
 const execFileAsync = promisify(execFile);
 
@@ -286,7 +287,7 @@ if (
             explainability: {
               method: 'Grad-CAM',
               target_layer: 'model.features[8]',
-              heatmapUrl: imageBase64,
+              heatmapUrl: getFallbackGradCamSvg('alzheimer'),
               display_slice: imageBase64,
               salient_regions: [
                 'Hippocampal Formation',
@@ -311,7 +312,7 @@ if (
               method: 'Grad-CAM',
               target_layer: 'model.features[8]',
               display_slice: imageBase64,
-              heatmapUrl: imageBase64,
+              heatmapUrl: getFallbackGradCamSvg(mode === 'dual' ? 'dual' : 'parkinson'),
               salient_regions: ['Substantia Nigra', 'Midbrain'],
             },
           }

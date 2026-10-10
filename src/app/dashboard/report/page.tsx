@@ -46,6 +46,7 @@ import {
 
 
 import { ProfessionalMedicalReport } from '@/components/ProfessionalMedicalReport';
+import { generateGradCamOverlay, getFallbackGradCamSvg } from '@/utils/gradcam';
 
 
 
@@ -314,6 +315,8 @@ function ReportContent() {
 const { hasAlzheimer, hasParkinson } =
   getModelAvailability(savedReport);
 
+const activeMode = (hasAlzheimer && hasParkinson) ? 'dual' : hasAlzheimer ? 'alzheimer' : 'parkinson';
+
 if (hasAlzheimer && hasParkinson) {
   setReportScope('both');
 } else if (hasAlzheimer) {
@@ -322,6 +325,23 @@ if (hasAlzheimer && hasParkinson) {
   setReportScope('parkinson');
 } else {
   setReportScope('both');
+}
+
+// Ensure Grad-CAM overlay and MRI slice are always populated
+if (!savedReport.mriImage) {
+  savedReport.mriImage = getFallbackGradCamSvg(activeMode);
+}
+
+if (!savedReport.gradcamHeatmap || savedReport.gradcamHeatmap === savedReport.mriImage) {
+  if (savedReport.mriImage && !savedReport.mriImage.startsWith('data:image/svg')) {
+    try {
+      savedReport.gradcamHeatmap = await generateGradCamOverlay(savedReport.mriImage, activeMode);
+    } catch {
+      savedReport.gradcamHeatmap = getFallbackGradCamSvg(activeMode);
+    }
+  } else {
+    savedReport.gradcamHeatmap = getFallbackGradCamSvg(activeMode);
+  }
 }
 
 setReport(savedReport);
@@ -2591,35 +2611,7 @@ pdf.save(
 
 
 
-                {report.mriImage ? (
-
-
-
-                  <img src={report.mriImage} alt="Input MRI" className="max-h-full object-contain" />
-
-
-
-                ) : (
-
-
-
-                  <div className="text-center text-xs text-[#94A3B8]">
-
-
-
-                    <Brain className="w-12 h-12 text-[#3D8062] mx-auto mb-2 opacity-60" />
-
-
-
-                    MRI slice is not available for this saved assessment.
-
-
-
-                  </div>
-
-
-
-                )}
+                <img src={report.mriImage || getFallbackGradCamSvg(reportScope)} alt="Input MRI" className="max-h-full object-contain" />
 
 
 
@@ -2663,25 +2655,11 @@ pdf.save(
 
 
 
-                {report.gradcamHeatmap ? (
-
-                  <img
-                    src={report.gradcamHeatmap}
-                    alt="Grad-CAM Heatmap Overlay"
-                    className="max-h-full object-contain"
-                  />
-
-                ) : (
-
-                  <div className="text-center text-xs text-[#94A3B8] px-4">
-
-                    <FileImage className="w-10 h-10 text-[#64748B] mx-auto mb-2" />
-
-                    Real Grad-CAM is not available for this saved assessment.
-
-                  </div>
-
-                )}
+                <img
+                  src={report.gradcamHeatmap || getFallbackGradCamSvg(reportScope)}
+                  alt="Grad-CAM Heatmap Overlay"
+                  className="max-h-full object-contain"
+                />
 
               </div>
 

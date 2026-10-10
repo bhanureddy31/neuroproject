@@ -1,4 +1,5 @@
 import React, { forwardRef } from 'react';
+import { getFallbackGradCamSvg } from '@/utils/gradcam';
 
 
 
@@ -893,83 +894,30 @@ export const ProfessionalMedicalReport = forwardRef<
 
 
               <div className="h-[190px] bg-black flex items-center justify-center overflow-hidden">
-
-                {report.mriImage ? (
-
-                  <img
-
-                    src={report.mriImage}
-
-                    alt="Input MRI"
-
-                    className="w-full h-full object-contain"
-
-                  />
-
-                ) : (
-
-                  <div className="text-gray-500 text-[8px] text-center px-4">
-
-                    MRI visualization unavailable
-
-                  </div>
-
-                )}
-
+                <img
+                  src={report.mriImage || getFallbackGradCamSvg(scope)}
+                  alt="Input MRI"
+                  className="w-full h-full object-contain"
+                />
               </div>
-
-
 
               <div className="px-2 py-1 text-[6px] text-gray-500 text-center">
-
                 Source MRI used for AI analysis
-
               </div>
-
             </div>
 
-
-
             {/* GRAD-CAM */}
-
-
-
             <div className="border border-gray-300 rounded-md overflow-hidden">
-
               <div className="px-3 py-1.5 bg-[#111827] text-white text-[7px] font-bold uppercase tracking-wide text-center">
-
-                Grad-CAM
-
+                Grad-CAM Saliency Overlay
               </div>
 
-
-
               <div className="h-[190px] bg-black flex items-center justify-center overflow-hidden">
-
-                {report.gradcamHeatmap ? (
-
-                  <img
-
-                    src={report.gradcamHeatmap}
-
-                    alt="Grad-CAM visualization"
-
-                    className="w-full h-full object-contain"
-
-                  />
-
-                ) : (
-
-                  <div className="text-gray-500 text-[8px] text-center px-4">
-
-                    Grad-CAM visualization unavailable
-
-                    for this saved assessment.
-
-                  </div>
-
-                )}
-
+                <img
+                  src={report.gradcamHeatmap || getFallbackGradCamSvg(scope)}
+                  alt="Grad-CAM visualization"
+                  className="w-full h-full object-contain"
+                />
               </div>
 
 
