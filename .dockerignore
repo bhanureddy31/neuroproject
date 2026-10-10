@@ -1,0 +1,15 @@
+﻿.git
+.next
+node_modules
+.venv
+venv
+__pycache__
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.backup
+*.mode-backup
+npm-debug.log*
