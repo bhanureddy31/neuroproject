@@ -528,9 +528,24 @@ def run_parkinson_inference(path):
             f"{PARKINSON_CHECKPOINT}"
         )
 
-    slices, preprocessing_metadata = preprocess_parkinson_nifti(
-        path
-    )
+    if not is_nifti_file(path):
+        img = Image.open(path).convert("L")
+        img_resized = img.resize((224, 224), Image.Resampling.BILINEAR)
+        slice_uint8 = np.array(img_resized, dtype=np.uint8)
+        slices = [slice_uint8 for _ in range(len(PARKINSON_SLICE_OFFSETS_MM))]
+        preprocessing_metadata = {
+            "original_spacing": [1.0, 1.0, 1.0],
+            "target_spacing": list(TARGET_SPACING),
+            "resampled_shape": [224, 224, len(PARKINSON_SLICE_OFFSETS_MM)],
+            "center_z": 2,
+            "z_indices": [0, 1, 2, 3, 4],
+            "slice_offsets_mm": PARKINSON_SLICE_OFFSETS_MM,
+            "input_type": "2D Image",
+        }
+    else:
+        slices, preprocessing_metadata = preprocess_parkinson_nifti(
+            path
+        )
 
     model, checkpoint = create_parkinson_model()
 
@@ -1092,12 +1107,19 @@ def run_alzheimer_inference(path):
     model.to(DEVICE)
     model.eval()
 
-    image = Image.open(
-        path
-    ).convert("RGB")
-
-    # Keep the original image for Grad-CAM display.
-    display_image = image.copy()
+    if is_nifti_file(path):
+        canonical_data, _ = canonicalize_nifti(path)
+        norm_data = normalize_intensity(canonical_data)
+        center_z = find_anatomical_center(norm_data)
+        slice_2d = norm_data[:, :, center_z]
+        slice_uint8 = resize_slice(slice_2d)
+        display_image = Image.fromarray(slice_uint8, mode="L").convert("RGB")
+        image = display_image
+    else:
+        image = Image.open(
+            path
+        ).convert("RGB")
+        display_image = image.copy()
 
     transform = transforms.Compose(
         [
@@ -1230,11 +1252,6 @@ def main():
         # Parkinson mode
         # -------------------------------------------------------------
         if args.mode == "parkinson":
-            if not is_nifti_file(image_path):
-                raise ValueError(
-                    "Parkinson mode requires a NIfTI file (.nii or .nii.gz)."
-                )
-
             result = run_parkinson_inference(image_path)
 
             output = {
@@ -1244,7 +1261,7 @@ def main():
                     "PyTorch EfficientNet-B0 "
                     "Parkinson Exp06 Deployment"
                 ),
-                "input_type": "NIfTI",
+                "input_type": "NIfTI" if is_nifti_file(image_path) else "Image",
                 "parkinson": result,
                 "alzheimer": None,
             }
@@ -1253,11 +1270,6 @@ def main():
         # Alzheimer mode
         # -------------------------------------------------------------
         elif args.mode == "alzheimer":
-            if is_nifti_file(image_path):
-                raise ValueError(
-                    "Alzheimer mode requires a 2D image file, such as JPG or PNG."
-                )
-
             result = run_alzheimer_inference(image_path)
 
             output = {
@@ -1267,50 +1279,17 @@ def main():
                     "PyTorch EfficientNet-B0 "
                     "Alzheimer Experiment 10"
                 ),
-                "input_type": "image",
+                "input_type": "NIfTI" if is_nifti_file(image_path) else "Image",
                 "alzheimer": result,
                 "parkinson": None,
             }
 
         # -------------------------------------------------------------
-        # Dual mode: Parkinson NIfTI analysis + Alzheimer slice analysis
+        # Dual mode: Parkinson analysis + Alzheimer analysis
         # -------------------------------------------------------------
         elif args.mode == "dual":
-            if not is_nifti_file(image_path):
-                raise ValueError(
-                    "Dual mode requires a NIfTI file (.nii or .nii.gz)."
-                )
-
-            import base64
-            import tempfile
-            from pathlib import Path
-
             parkinson_result = run_parkinson_inference(image_path)
-
-            display_slice = (
-                parkinson_result
-                .get("explainability", {})
-                .get("display_slice")
-            )
-            prefix = "data:image/png;base64,"
-
-            if not isinstance(display_slice, str) or not display_slice.startswith(prefix):
-                raise RuntimeError(
-                    "Could not obtain the central MRI slice for Alzheimer analysis."
-                )
-
-            image_bytes = base64.b64decode(display_slice[len(prefix):])
-
-            with tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False
-            ) as temp_image:
-                temp_image.write(image_bytes)
-                temp_image_path = temp_image.name
-
-            try:
-                alzheimer_result = run_alzheimer_inference(temp_image_path)
-            finally:
-                Path(temp_image_path).unlink(missing_ok=True)
+            alzheimer_result = run_alzheimer_inference(image_path)
 
             output = {
                 "success": True,
@@ -1319,7 +1298,7 @@ def main():
                     "PyTorch EfficientNet-B0 "
                     "Parkinson Exp06 + Alzheimer Experiment 10"
                 ),
-                "input_type": "NIfTI",
+                "input_type": "NIfTI" if is_nifti_file(image_path) else "Image",
                 "parkinson": parkinson_result,
                 "alzheimer": alzheimer_result,
             }
